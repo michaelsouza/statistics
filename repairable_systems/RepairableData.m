@@ -7,7 +7,7 @@ classdef RepairableData < handle
         numberOfSystems  = 0;
         systems          = [];
         
-        % mcnf properties (arrays):
+        % Mean Cumulative Number of Failures (mcnf) properties (arrays):
         % failureTimes: failure times (includes the last time censoring)
         % meanCumulativeNumberOfeFailures: mean cumulative number of failures
         % numberOfUncensoredSystems: number of uncensored systems 
@@ -18,6 +18,7 @@ classdef RepairableData < handle
     
     methods
         function this = RepairableData(filename)
+            % Constructor
             db         = dlmread(filename);
             [nrows, ~] = size(db);
             ndata      = nrows - 1;
@@ -41,6 +42,7 @@ classdef RepairableData < handle
         end
         
         function fx = eval_mcnf(this,x)
+            % Evals the Mean Cumulative Number of Failures (mcnf)
             t    = this.mcnf.failureTimes;
             MCNF = this.mcnf.meanCumulativeNumberOfFailures;
             fx = zeros(size(x));
@@ -96,7 +98,7 @@ classdef RepairableData < handle
     end
     methods(Access=private)
         function set_mcnf(this)
-            % Set the mean cumulative number of failures as a function of t (time).
+            % Set the Mean Cumulative Number of Failures (mcnf) as a function of t (time).
             
             T = this.censorTimes;
             t_failures = sort(this.failureTimes);

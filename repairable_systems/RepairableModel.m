@@ -9,7 +9,7 @@ classdef RepairableModel < handle
             this.model_type = mtype;
             
             switch mtype
-                case 'plp'
+                case 'plp' % Power Law Proccess
                     this.lambda = @(t, p) (p(1)/p(2)) * (t/p(2)).^(p(1) - 1);
                     this.p = [1+rand,rand];
                 otherwise
@@ -18,6 +18,8 @@ classdef RepairableModel < handle
         end
         
         function p = fit(this,data)
+            % Estimates the intensity function (rho) parameters by fitting
+            % the RepairableData Mean Cumulative Number Of Failures (mcnf).
             fprintf('=== FIT =========================\n')
 
             t = data.mcnf.failureTimes;
@@ -30,14 +32,13 @@ classdef RepairableModel < handle
             tau    = this.calc_tau(data);
             
             switch this.model_type
-                case 'plp'
+                case 'plp' % Power Law Proccess
                     fprintf('> nlinfit(beta,theta)\n')
                     fprintf('  RMSE ........... % g\n', model.RMSE)
                     fprintf('  R2(ORD,ADJ) .... % g, % g \n', model.Rsquared.Ordinary, model.Rsquared.Adjusted);
                     fprintf('beta  ............ % g\n', this.p(1));
                     fprintf('theta ............ % g\n', this.p(2));
                     fprintf('tau .............. % g\n', tau);
-                    
                     
                     %                     std_beta  = sqrt(CovB(1,1));
                     %                     std_theta = sqrt(CovB(2,2));
@@ -108,9 +109,15 @@ classdef RepairableModel < handle
     
     methods(Access=private)
         function y = eval_model(this,p,t)
-            y = zeros(size(t));
-            for i = 1:length(t)
-                y(i) = integral(@(t)this.lambda(t,p),0,t(i));
+            switch this.model_type
+                case 'plp'
+                    y = (t./p(2)).^p(1);
+                otherwise
+                    % numerical approximation of integral value
+                    y = zeros(size(t));
+                    for i = 1:length(t)
+                        y(i) = integral(@(t)this.lambda(t,p),0,t(i));
+                    end
             end
         end
         
@@ -121,7 +128,7 @@ classdef RepairableModel < handle
                 case 'plp'
                     beta  = this.p(1);
                     theta = this.p(2);
-                    tau = theta * ((beta - 1) * data.cost)^(-1/beta);
+                    tau   = theta * ((beta - 1) * data.cost)^(-1/beta);
                     output.gap        = eq_tau(tau);
                     output.algorithm  = 'analytical';
                     output.iterations = 0;
@@ -138,7 +145,7 @@ classdef RepairableModel < handle
                     %                     Hucl = (std_tau^2 * beta * norminv(alpha/2)^2) / (2 * (tau)^3);
                 otherwise
                     options = optimoptions('fsolve','Display','off');
-                    tau    = max(data.censorTimes); % starting point
+                    tau     = max(data.censorTimes); % starting point
                     [tau,gap,~,output] = fsolve(eq_tau,tau,options);
                     output.gap = gap;
                     %             fprintf('tau .............. % g\n', tau);
