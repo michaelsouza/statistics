@@ -2,12 +2,13 @@ classdef RepairableModelPLP < handle
     % Power Law Process (PLP)
     % lambda(t) = beta / theta * (t/theta)^(beta - 1)
     %
-    % See references at the end of this file.
+    % See the references at the end of this file.
     
     properties
         beta      = nan   % parameter of intensity function (lambda)
         theta     = nan   % parameter of intensity function (lambda)
         tau       = nan   % policy repair time interval
+        H         = nan   % expected cost per unit of time
         verbose   = true  % print output (boolean)
         algorithm = 'fitnlm' % algorithm used to estimate plp parameters
         data      = [];
@@ -49,13 +50,17 @@ classdef RepairableModelPLP < handle
             end
             
             % calculate and set the optimal time interval tau
-            this.calc_tau(data)
+            this.calc_tau(data);
+
+            % calculate and set H(tau)
+            this.ExpectedCostPerUnitOfTime(data);
             
             % display results
             if(this.verbose)
                 fprintf('beta  ............ % g\n', this.beta);
                 fprintf('theta ............ % g\n', this.theta);
                 fprintf('tau .............. % g\n', this.tau);
+                fprintf('H ................ % g\n', this.H);
             end
         end
         
@@ -72,29 +77,29 @@ classdef RepairableModelPLP < handle
             y = (beta/theta) * (t/theta).^(beta - 1);
         end
         
-        function N = eval(this,t,beta,theta)
-            % Calculates the expected number of failures until time t.
-            % beta  :: plp parameter
-            % theta :: plp parameter
+        function Nt = ExpectedNumberOfFailures(this,t,beta,theta)
+            % Calculates N(t), the expected number of failures until time t.
+            % beta  :: plp parameter (optional)
+            % theta :: plp parameter (optional)
             if(nargin < 3)
                 beta  = this.beta;
                 theta = this.theta;
             end
             % Model evaluation - Expected number of failures until time t.
-            N = (t./theta).^beta;
+            Nt = (t./theta).^beta;
         end
         
         function plot(this, marker)
             tmax = max(this.data.censorTimes);
             t = 0:tmax/25:tmax;
-            y = this.eval(t);
+            y = this.ExpectedNumberOfFailures(t);
             plot(t,y,'DisplayName',['PLP:' this.algorithm],'Marker',marker)
         end
         
         %% TAU
         function calc_tau(this, data)
             % See [Gilardoni2007] eq. (5) pp. 50
-            this.tau = this.theta * ((this.beta - 1) * data.cost)^(-1/this.beta);
+            this.tau = this.theta * (data.CPM / ((this.beta - 1) * data.CMR))^(1/this.beta);
             
             %                     T = data.censorTimes;
             %                     N = data.numberOfFailures;
@@ -118,9 +123,16 @@ classdef RepairableModelPLP < handle
         function gap = check_tau(this)
             % Check the error (gap) in the current tau value.
             % See [Gilardoni2007] eq. (4) pp. 49
-            gap = this.tau .* this.lambda(this.tau) - this.eval(this.tau) - 1/this.data.cost;
+            gap = this.tau .* this.lambda(this.tau) - this.ExpectedNumberOfFailures(this.tau) - this.data.CPM/this.data.CMR;
         end
         
+        %% H(tau) :: Expected cost per unit of time
+        function ExpectedCostPerUnitOfTime(this, data)
+            % Expected cost per unit of time
+            % See [Gilardoni2007] eq.(2) pp. 49
+            this.H = (data.CPM + data.CMR * this.ExpectedNumberOfFailures(this.tau)) / this.tau;
+        end
+
         %% BOOTSTRP
         function bstrp(this, data) 
             fprintf('=== PLP:BOOTSTRAP ===================\n')
@@ -141,6 +153,8 @@ classdef RepairableModelPLP < handle
             % set beta and theta
             this.beta  = mean(bootstat(:,1));
             this.theta = mean(bootstat(:,2));
+            this.tau   = mean(bootstat(:,3));
+            this.H     = mean(bootstat(:,4));
             
             % restoring verbose original value
             this.verbose = vb;
@@ -148,37 +162,65 @@ classdef RepairableModelPLP < handle
             if(this.verbose)
                 figure;
                 
-                subplot(2,2,1); hold on; box on;
+                % plot beta 
+                subplot(2,4,1); hold on; box on;
                 histogram(bootstat(:,1),50,'Normalization','probability');
                 plot(this.beta,0,'o');
                 xlabel('beta');
                 ylabel('p(beta)');
                 title('BSTRP :: Histogram - BETA')
                 
-                subplot(2,2,2); hold on; box on;
+                subplot(2,4,5); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,1)); % estimate density (normal)
                 plot(x,f); plot(this.beta,0,'o');
                 title('BSTRP :: Density - BETA')
                 
-                subplot(2,2,3); hold on; box on;
+                % plot theta
+                subplot(2,4,2); hold on; box on;
                 histogram(bootstat(:,2),50,'Normalization','probability');
                 plot(this.theta,0,'o');
                 xlabel('theta');
                 ylabel('p(theta)');
                 title('BSTRP :: Histogram - THETA')
                 
-                subplot(2,2,4); hold on; box on;
+                subplot(2,4,6); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,2)); % estimate density (normal)
                 plot(x,f); plot(this.theta,0,'o');
                 title('BSTRP :: Density - THETA');
                 
+                % plot tau
+                subplot(2,4,3); hold on; box on;
+                histogram(bootstat(:,3),50,'Normalization','probability');
+                plot(this.tau,0,'o');
+                xlabel('tau');
+                ylabel('p(tau)');
+                title('BSTRP :: Histogram - TAU')
+                
+                subplot(2,4,7); hold on; box on;
+                [f,x] = ksdensity(bootstat(:,3)); % estimate density (normal)
+                plot(x,f); plot(this.tau,0,'o');
+                title('BSTRP :: Density - TAU');
+                
+                % plot H
+                subplot(2,4,4); hold on; box on;
+                histogram(bootstat(:,4),50,'Normalization','probability');
+                plot(this.H,0,'o');
+                xlabel('H(tau)');
+                ylabel('p(H(tau))');
+                title('BSTRP :: Histogram - H(tau)')
+                
+                subplot(2,4,8); hold on; box on;
+                [f,x] = ksdensity(bootstat(:,4)); % estimate density (normal)
+                plot(x,f); plot(this.H,0,'o');
+                title('BSTRP :: Density - H(tau)');
             end
         end
         function p = bstrp_fun(this, data, x)
             % x : id of the systems to be used
             
             % setup new data (d)
-            d.cost            = data.cost;
+            d.CMR             = data.CMR;
+            d.CPM             = data.CPM;
             d.systems         = data.systems(x);
             d.numberOfSystems = length(d.systems);
             
@@ -198,14 +240,13 @@ classdef RepairableModelPLP < handle
             this.CMLE(d);
 
             % set tau = tau(beta,theta)
-            tau = this.calc_tau(d);
+            this.calc_tau(d);
 
-            % set H = H(tau) (See eq.(2) [Gilardoni2007] pp. 49)
-            % Here we assume that CPM = $1 (one monetary unit)
-            H   = (1 + )
+            % set ECT = H(tau) (See eq.(2) [Gilardoni2007] pp. 49)
+            this.ExpectedCostPerUnitOfTime(d);
             
             % set output
-            p = [this.beta, this.theta, tau];
+            p = [this.beta, this.theta, this.tau, this.H];
         end
         
         %% FITNLM :: Nonlinear Regression
@@ -221,7 +262,7 @@ classdef RepairableModelPLP < handle
             p = [1+rand,rand]; % p = [beta,theta];
             
             % nonlinear regression (fit)
-            modelfun = @(p,t)this.eval(t,p(1),p(2));
+            modelfun = @(p,t)this.ExpectedNumberOfFailures(t,p(1),p(2));
             model    = fitnlm(t,y,modelfun,p,'Weights',w);
             p        = model.Coefficients.Estimate;
             
@@ -249,10 +290,10 @@ classdef RepairableModelPLP < handle
             this.beta  = this.MLE_beta(t,T,N);
             this.theta = this.MLE_theta(T,N);
             
-            T = data.censorTimes;
-            N = data.numberOfFailures;
-            H = this.MLE_H(T,N,this.beta,this.theta); % Hess(log(L(beta,theta)))
-            S = inv(-H);
+            T   = data.censorTimes;
+            N   = data.numberOfFailures;
+            HLL = this.MLE_H(T,N,this.beta,this.theta); % Hess(log(L(beta,theta)))
+            S   = inv(-HLL);
             std_beta  = sqrt(S(1,1));
             std_theta = sqrt(S(2,2));
             fprintf('  std(beta) ...... % g\n', std_beta);
