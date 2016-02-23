@@ -178,7 +178,8 @@ classdef RepairableModelPLP < handle
             % x : id of the systems to be used
             
             % setup new data (d)
-            d.systems = data.systems(x);
+            d.cost            = data.cost;
+            d.systems         = data.systems(x);
             d.numberOfSystems = length(d.systems);
             
             % set censor times
@@ -195,9 +196,16 @@ classdef RepairableModelPLP < handle
             
             % set beta and theta using CMLE
             this.CMLE(d);
+
+            % set tau = tau(beta,theta)
+            tau = this.calc_tau(d);
+
+            % set H = H(tau) (See eq.(2) [Gilardoni2007] pp. 49)
+            % Here we assume that CPM = $1 (one monetary unit)
+            H   = (1 + )
             
             % set output
-            p = [this.beta, this.theta];
+            p = [this.beta, this.theta, tau];
         end
         
         %% FITNLM :: Nonlinear Regression
