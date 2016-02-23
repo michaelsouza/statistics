@@ -143,15 +143,7 @@ classdef RepairableData < handle
             %  a) If two systems failed at the same time, the output will
             %  have duplicated entries;
             
-            this.failureTimes = zeros(1,this.numberOfFailures);
-            istart = 1;
-            for i = 1:this.numberOfSystems
-                ti = this.systems(i).failureTimes;
-                ifinal = istart + length(ti) - 1;
-                this.failureTimes(istart:ifinal) = ti;
-                istart = ifinal + 1;
-            end
-            this.failureTimes = sort(this.failureTimes);
+            this.failureTimes = sort([this.systems.failureTimes]);
         end
     end
 end
