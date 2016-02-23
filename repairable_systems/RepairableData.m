@@ -1,6 +1,7 @@
 classdef RepairableData < handle
     properties
-        cost             = 0;  % CMR/CPM
+        CPM              = nan; % Cost of Preventive Maintenance (Perfect)
+        CMR              = nan; % Cost of Minimal Repair
         failureTimes     = []; % failure times
         censorTimes      = []; % censoring times
         numberOfFailures = 0;  % total number of failures
@@ -23,7 +24,10 @@ classdef RepairableData < handle
             [nrows, ~] = size(db);
             ndata      = nrows - 1;
             
-            this.cost  = db(1,1);   % the first entry is the ratio CMR/CPM
+            % read the costs
+            this.CPM  = db(1,1);
+            this.CMR  = db(1,2);
+
             this.systems = repmat(struct('failureTimes',[],'censorTime',0), ndata, 1);
             for i = 2:nrows
                 % all times must be greater than zero
@@ -39,7 +43,7 @@ classdef RepairableData < handle
             set_failureTimes(this);
             set_censorTimes(this);
             set_mcnf(this);
-        end
+        end        
         
         function fx = eval_mcnf(this,x)
             % Evals the Mean Cumulative Number of Failures (mcnf)
