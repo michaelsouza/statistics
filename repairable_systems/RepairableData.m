@@ -75,6 +75,7 @@ classdef RepairableData < handle
             end
             plot(x,y,'.-','DisplayName','MCNF')
             xlim([0 max(this.censorTimes) * 1.05])
+            ylim([-0.02 max(y) *1.05]);
             title('Mean Cumulative Number of Failures');
             xlabel('time');
             ylabel('Number of Failures');
@@ -99,23 +100,38 @@ classdef RepairableData < handle
             ylim([0 (this.numberOfSystems + 1)])
             xlim([0 max(this.censorTimes) * 1.05])
         end
+        
+        function y = distance(this,f,p)
+            % Calculates the Lp distance ||f - mcnf||p.
+            t = this.failureTimes;
+            h = @(t) abs(this.eval_mcnf(t) - f(t)).^p;
+            y = 0;
+            tol = 1E-8;
+            y = y + integral(h,0,t(1)-tol);
+            for i = 2:this.numberOfFailures
+                y = y + integral(h,t(i-1),t(i)-tol);
+            end
+            y = y + integral(h,t(end),this.censorTimes(end));
+            y = y.^(1/p);
+        end
     end
+
     methods(Access=private)
         function set_mcnf(this)
             % Set the Mean Cumulative Number of Failures (mcnf) as a function of t (time).
             
             T = this.censorTimes;
             t_failures = sort(this.failureTimes);
-            t = unique([0,t_failures,max(T)]);
+            t = unique([0,t_failures,T]);
             
             % mcnf(j): mean number of cumulative failures until time t(j)
             % q(j)   : number of uncensored systems until time t(j)
             MCNF = zeros(size(t));
             q    = zeros(size(t));
             for j = 1:length(t)
-                q(j) = sum(T >= t(j));
+                q(j) = sum(T > t(j)); 
                 for i = 1:this.numberOfSystems
-                    if(T(i) >= t(j))
+                    if(T(i) > t(j))
                         MCNF(j) = MCNF(j) + sum(this.systems(i).failureTimes <= t(j));
                     end
                 end
