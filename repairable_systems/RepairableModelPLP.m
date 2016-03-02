@@ -9,6 +9,7 @@ classdef RepairableModelPLP < handle
         theta     = nan   % parameter of intensity function (lambda)
         tau       = nan   % policy repair time interval
         H         = nan   % expected cost per unit of time
+        ci        = struct('beta',[nan,nan],'theta',[nan,nan],'tau',[nan,nan],'H',[nan,nan]);
         verbose   = true  % print output (boolean)
         algorithm = 'fitnlm' % algorithm used to estimate plp parameters
         data      = [];
@@ -51,16 +52,18 @@ classdef RepairableModelPLP < handle
             
             % calculate and set the optimal time interval tau
             this.calc_tau(data);
-
+            
             % calculate and set H(tau)
             this.ExpectedCostPerUnitOfTime(data);
             
             % display results
             if(this.verbose)
-                fprintf('beta  ............ % g\n', this.beta);
-                fprintf('theta ............ % g\n', this.theta);
-                fprintf('tau .............. % g\n', this.tau);
-                fprintf('H ................ % g\n', this.H);
+                fprintf('beta  ............ % 9.3g [% 9.3g, % 9.3g]\n', this.beta, this.ci.beta);
+                fprintf('theta ............ % 9.3g [% 9.3g, % 9.3g]\n', this.theta, this.ci.theta);
+                fprintf('tau .............. % 9.3g [% 9.3g, % 9.3g]\n', this.tau, this.ci.tau);
+                fprintf('H ................ % 9.3g [% 9.3g, % 9.3g]\n', this.H, this.ci.H);
+                fprintf('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 1));
+                fprintf('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 2));
             end
         end
         
@@ -132,11 +135,10 @@ classdef RepairableModelPLP < handle
             % See [Gilardoni2007] eq.(2) pp. 49
             this.H = (data.CPM + data.CMR * this.ExpectedNumberOfFailures(this.tau)) / this.tau;
         end
-
+        
         %% BOOTSTRP
-        function bstrp(this, data) 
-            fprintf('=== PLP:BOOTSTRAP ===================\n')
-                
+        function bstrp(this, data)
+            
             % saving original verbose value
             vb = this.verbose;
             
@@ -148,21 +150,29 @@ classdef RepairableModelPLP < handle
             nboot   = 10000;
             N = data.numberOfSystems;
             x = 1:N; % id of each system
-            bootstat = bootstrp(nboot,@(x)this.bstrp_fun(data, x),x,'Options',options);
-        
-            % set beta and theta
+            [CI,bootstat] = bootci(nboot,{@(x)this.bstrp_fun(data, x),x},'Options',options);
+            
+            % set estimatives
             this.beta  = mean(bootstat(:,1));
             this.theta = mean(bootstat(:,2));
             this.tau   = mean(bootstat(:,3));
             this.H     = mean(bootstat(:,4));
             
+            % set confidence intervals
+            this.ci.beta  = CI(:,1);
+            this.ci.theta = CI(:,2);
+            this.ci.tau   = CI(:,3);
+            this.ci.H     = CI(:,4);
+            
             % restoring verbose original value
             this.verbose = vb;
             
             if(this.verbose)
+                fprintf('=== PLP:BOOTSTRAP ================\n')
+                
                 figure;
                 
-                % plot beta 
+                % plot beta
                 subplot(2,4,1); hold on; box on;
                 histogram(bootstat(:,1),50,'Normalization','probability');
                 plot(this.beta,0,'o');
@@ -173,6 +183,7 @@ classdef RepairableModelPLP < handle
                 subplot(2,4,5); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,1)); % estimate density (normal)
                 plot(x,f); plot(this.beta,0,'o');
+                xlabel('beta');
                 title('BSTRP :: Density - BETA')
                 
                 % plot theta
@@ -186,6 +197,7 @@ classdef RepairableModelPLP < handle
                 subplot(2,4,6); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,2)); % estimate density (normal)
                 plot(x,f); plot(this.theta,0,'o');
+                xlabel('theta');
                 title('BSTRP :: Density - THETA');
                 
                 % plot tau
@@ -199,6 +211,7 @@ classdef RepairableModelPLP < handle
                 subplot(2,4,7); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,3)); % estimate density (normal)
                 plot(x,f); plot(this.tau,0,'o');
+                xlabel('tau');
                 title('BSTRP :: Density - TAU');
                 
                 % plot H
@@ -212,6 +225,7 @@ classdef RepairableModelPLP < handle
                 subplot(2,4,8); hold on; box on;
                 [f,x] = ksdensity(bootstat(:,4)); % estimate density (normal)
                 plot(x,f); plot(this.H,0,'o');
+                xlabel('H(tau)');
                 title('BSTRP :: Density - H(tau)');
             end
         end
@@ -226,22 +240,22 @@ classdef RepairableModelPLP < handle
             
             % set censor times
             d.censorTimes = [d.systems.censorTime];
-
+            
             % number of failures
             d.numberOfFailures = 0;
             for i = 1:d.numberOfSystems
                 d.numberOfFailures = d.numberOfFailures + length(d.systems(i).failureTimes);
             end
-
+            
             % failure times
             d.failureTimes = sort([d.systems.failureTimes]);
             
             % set beta and theta using CMLE
             this.CMLE(d);
-
+            
             % set tau = tau(beta,theta)
             this.calc_tau(d);
-
+            
             % set ECT = H(tau) (See eq.(2) [Gilardoni2007] pp. 49)
             this.ExpectedCostPerUnitOfTime(d);
             
@@ -265,19 +279,21 @@ classdef RepairableModelPLP < handle
             modelfun = @(p,t)this.ExpectedNumberOfFailures(t,p(1),p(2));
             model    = fitnlm(t,y,modelfun,p,'Weights',w);
             p        = model.Coefficients.Estimate;
+            CI       = model.coefCI;
             
-            % set model parameters
+            % set estimators
             this.beta  = p(1);
             this.theta = p(2);
             
+            % set confidence intervals
+            this.ci.beta  = CI(1,:);
+            this.ci.theta = CI(2,:);
+            
             if(this.verbose)
-                CI95 = model.coefCI;
-                fprintf('=== PLP:FITNLM ==================\n')
+                fprintf('=== PLP:FITNLM ===================\n')
                 fprintf('> nlinfit(beta,theta)\n')
                 fprintf('  RMSE ........... % g\n', model.RMSE)
                 fprintf('  R2(ORD,ADJ) .... % g, % g \n', model.Rsquared.Ordinary, model.Rsquared.Adjusted);
-                fprintf('  CI95%%(beta) ...   [%g,%g]\n', CI95(1,:));
-                fprintf('  CI95%%(theta) ..   [%g,%g]\n', CI95(2,:));
             end
         end
         
@@ -306,7 +322,7 @@ classdef RepairableModelPLP < handle
             options = optimoptions('fsolve','Display','off');
             [beta, gap, ~, output] = fsolve(@(beta)this.MLE_check_beta(beta, t, T, N), 1, options);
             if(this.verbose)
-                fprintf('=== PLP:MLE ==========================\n');
+                fprintf('=== PLP:MLE ======================\n');
                 fprintf('> fsolve(beta)\n');
                 fprintf('  algorithm ......  %s\n', output.algorithm);
                 fprintf('  gap ............ % g\n', gap);
@@ -326,7 +342,7 @@ classdef RepairableModelPLP < handle
             theta = sum(T.^this.beta / N)^(1/this.beta);
         end
         function h = MLE_H(~,T,N,beta,theta)
-            % Log Likelihood Hessian 
+            % Log Likelihood Hessian
             %    This function was generated by the Symbolic Math Toolbox version 6.2.
             
             t2  = theta.^(-beta);
@@ -353,9 +369,9 @@ classdef RepairableModelPLP < handle
             CI.max = chi2inv(0.975,2*M) * this.beta / (2*M);
             CI.min = chi2inv(0.025,2*M) * this.beta / (2*M);
             
+            this.ci.beta = [CI.min, CI.max];
             if(this.verbose)
-                fprintf('=== CMLE (Analytical) ===========\n');
-                fprintf('  CI95%%(beta) ...   [%g,%g]\n', CI.min, CI.max);
+                fprintf('=== PLP:CMLE (Analytical) ========\n');
             end
         end
         function M = CMLE_M(~,data)
