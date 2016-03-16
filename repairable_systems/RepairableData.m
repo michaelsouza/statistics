@@ -10,7 +10,7 @@ classdef RepairableData < handle
         
         % Mean Cumulative Number of Failures (mcnf) properties (arrays):
         % failureTimes: failure times (includes the last time censoring)
-        % meanCumulativeNumberOfeFailures: mean cumulative number of failures
+        % meanCumulativeNumberOfFailures: mean cumulative number of failures
         % numberOfUncensoredSystems: number of uncensored systems 
         mcnf = struct('failureTimes',[],...
             'meanCumulativeNumberOfFailures',[],...
@@ -54,6 +54,7 @@ classdef RepairableData < handle
                 if(x(i) > t(end))
                     error('The input parameter is out of the acceptable range.\n');
                 end
+                % bracketing
                 index = sum(t <= x(i));
                 fx(i) = MCNF(index);
             end
@@ -101,18 +102,29 @@ classdef RepairableData < handle
             xlim([0 max(this.censorTimes) * 1.05])
         end
         
-        function y = distance(this,f,p)
-            % Calculates the Lp distance ||f - mcnf||p.
-            t = this.failureTimes;
-            h = @(t) abs(this.eval_mcnf(t) - f(t)).^p;
-            y = 0;
-            tol = 1E-8;
-            y = y + integral(h,0,t(1)-tol);
-            for i = 2:this.numberOfFailures
-                y = y + integral(h,t(i-1),t(i)-tol);
+        function d = distance(this,f,norm_type)
+            % Calculates the ||f - mcnf||.
+            t = this.mcnf.failureTimes;
+            
+            % set integrand
+            switch norm_type
+                case 'L1'
+                    p = 1;
+                case 'L2'
+                    p = 2;
+                otherwise
+                    error('NotSupportedNormType');
             end
-            y = y + integral(h,t(end),this.censorTimes(end));
-            y = y.^(1/p);
+            h = @(t) abs(this.eval_mcnf(t) - f(t)).^p;
+
+            % decompose the integral as the sum of the integrals where mcnf is constant.
+            tol = 1E-8;
+            d   = 0;
+            for i = 1:(length(t) - 1)
+                % the intervals are right-opened ((-1) x tol)
+                d = d + integral(h,t(i),t(i+1)-tol);
+            end
+            d = d^(1/p);
         end
     end
 

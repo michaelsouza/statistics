@@ -62,8 +62,8 @@ classdef RepairableModelPLP < handle
                 fprintf('theta ............ % 9.3g [% 9.3g, % 9.3g]\n', this.theta, this.ci.theta);
                 fprintf('tau .............. % 9.3g [% 9.3g, % 9.3g]\n', this.tau, this.ci.tau);
                 fprintf('H ................ % 9.3g [% 9.3g, % 9.3g]\n', this.H, this.ci.H);
-                fprintf('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 1));
-                fprintf('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 2));
+                fprintf('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L1'));
+                fprintf('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L2'));
             end
         end
         
