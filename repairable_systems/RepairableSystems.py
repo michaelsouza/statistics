@@ -76,8 +76,9 @@ class RepairableModelPLP(object):
 		if(Algorithm=="bootstrap"):
 			(beta,theta,tau,H,ci) = this.bootstrap(data)
 
+		tau = this.calc_tau(beta, theta, data)
+
 		if(verbose):
-			print('gap_tau .......... {:9.3g}'.format(this.gap_tau(beta,theta,tau,data)))
 			print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta , ci['beta' ][0], ci['beta' ][1]));
 			print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]));
 			print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}]'.format(tau  , ci['tau'  ][0], ci['tau'  ][1]));
@@ -106,6 +107,11 @@ class RepairableModelPLP(object):
 		# theta :: PLP parameter
 		y = (beta/theta) * (t/theta) ** (beta - 1)
 		return y
+	
+	def calc_tau(this, beta, theta, data):
+		# See [Gilardoni2007] eq. (5) pp. 50
+		tau = theta * (data.CPM / ((beta - 1) * data.CMR)) ** (1/beta);
+		return tau
 
 	def gap_tau(this,beta,theta,tau,data):
 		# Check the error (gap) in the current tau value.
@@ -142,11 +148,6 @@ class RepairableModelPLP(object):
 
 		# set output
 		return (beta, theta, tau, H)
-
-	def calc_tau(this, beta, theta, data):
-		# See [Gilardoni2007] eq. (5) pp. 50
-		tau = theta * (data.CPM / ((beta - 1) * data.CMR)) ** (1/beta);
-		return tau
 
 	# CMLE :: Conditional Maximum Likelihood Estimator =============================
 	def CMLE(this,data):
