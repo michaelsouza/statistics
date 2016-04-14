@@ -12,7 +12,7 @@ def bootci(nboot, bootfun, data):
 	bootmat = np.zeros((nboot,n))
 
 	# bootstrap kernel
-	for k in range(0,nboot):
+	for k in range(nboot):
 		# sampling
 		index  = np.random.randint(N,size=N)
 		sample = data.sample(index)
@@ -20,11 +20,44 @@ def bootci(nboot, bootfun, data):
 		# eval bootfun
 		bootmat[k,:] = bootfun(sample)
 
-	bootstat = [np.mean(bootmat[:,i]) for i in range(0,n)]
-	ci       = [[np.percentile(bootmat[:,i],2.5),np.percentile(bootmat[:,i],97.5)] for i in range(0,n)]
+	bootstat = [np.mean(bootmat[:,i]) for i in range(n)]
+	ci       = [[np.percentile(bootmat[:,i],2.5),np.percentile(bootmat[:,i],97.5)] for i in range(n)]
 	return (ci, bootstat)
 
 # RepairableData ===================================================================
+class MCNF(object):
+	def __init__(this, data):
+		# Mean Cumulative Number of Failures (mcnf) as a function of t (time).
+		T = data.censorTimes;
+		
+		# get unique failure times and time interval
+		t = [0];
+		for i in range(data.numberOfSystems):
+			# add censor times
+			if T[i] not in t: t.append(T[i])
+			for j in range(len(data.failureTimes[i])):
+				tij = data.failureTimes[i][j]
+				# add failure times
+				if tij not in t: t.append(tij)
+		t = np.sort(t)		
+
+		# mcnf[j]: mean number of cumulative failures until time t(j)
+		# q[j]   : number of uncensored systems until time t(j)
+		mcnf = np.zeros(len(t));
+		q    = np.zeros(len(t));
+		for j in range(len(t)):
+			q[j] = sum(T >= t[j]); 
+			for i in range(data.numberOfSystems):
+				if(T[i] > t[j]):
+					mcnf[j] = mcnf[j] + sum(data.failureTimes[i] <= t[j]);		
+		# adjust the average
+		for j in range(len(q)):
+			mcnf[j] = mcnf[j] / q[j]
+
+		this.failureTimes = t;
+		this.meanCumulativeNumberOfFailures = mcnf;
+		this.numberOfUncensoredSystems = q;
+		
 class RepairableData(object):
 	def __init__(this, filename=None,show=False):
 		# create an empty data
@@ -33,27 +66,27 @@ class RepairableData(object):
 			this.CPM = 0
 			this.numberOfSystems = 0
 			this.failureTimes = []
-			this.censorTimes = []
-		
+			this.censorTimes = []		
+			return
+
 		# read data from file
-		else: 
-			with open(filename) as fid:
-				values  = np.fromstring(fid.readline(), dtype=np.float,sep=' ') 
-				this.CPM = values[0]
-				this.CMR = values[1]
-				rawdata = fid.readlines()    
-				times = [np.fromstring(data,dtype=np.float, sep=' ') for data in rawdata]
-				this.numberOfSystems = len(times)
-				this.failureTimes = [t[0:-1] for t in times]
-				this.censorTimes = [t[-1] for t in times]
-				this.mcnf = this.set_mcnf()
-				if(show): this.show()
+		with open(filename) as fid:
+			values  = np.fromstring(fid.readline(), dtype=np.float,sep=' ') 
+			this.CPM = values[0]
+			this.CMR = values[1]
+			rawdata = fid.readlines()    
+			times = [np.fromstring(data,dtype=np.float, sep=' ') for data in rawdata]
+			this.numberOfSystems = len(times)
+			this.failureTimes = [t[0:-1] for t in times]
+			this.censorTimes = [t[-1] for t in times]
+			this.mcnf = MCNF(this)
+			if(show): this.show()
 
 	def plot_failures(this):
-		for i in range(0, this.numberOfSystems):
+		for i in range( this.numberOfSystems):
 			plt.plot([0, this.censorTimes[i]],[i+1,i+1],'b-')
 			plt.plot(this.censorTimes[i],i+1,'yo')
-			plt.plot(this.failureTimes[i],[i+1 for j in range(0,len(this.failureTimes[i]))],'ro')
+			plt.plot(this.failureTimes[i],[i+1 for j in range(len(this.failureTimes[i]))],'ro')
 
 		plt.ylabel('System ID')
 		plt.xlabel('Failure Times') 
@@ -66,7 +99,7 @@ class RepairableData(object):
 		x = zeros(4 * (length(t)-1), 1);
 		y = zeros(size(x));
 		j = 0;
-		for i in range(0,len(t)-1):
+		for i in range(len(t)-1):
 			x[(j+1):(j+4)] = [t(i), t(i+1), t(i+1), t(i+1)];
 			y[(j+1):(j+4)] = [MCNF(i),MCNF(i),MCNF(i),MCNF(i+1)];
 			j = j + 4;
@@ -76,40 +109,6 @@ class RepairableData(object):
 		title('Mean Cumulative Number of Failures');
 		xlabel('time');
 		ylabel('Number of Failures');
-
-	def set_mcnf(this):
-		# Set the Mean Cumulative Number of Failures (mcnf) as a function of t (time).
-		T = this.censorTimes;
-		
-		# get unique failure times and time interval
-		t = [0];
-		for i in range(0,this.numberOfSystems):
-			# add censor times
-			if(not t.contains(T[i])): t.append(T[i])
-			for j in range(0,len(this.failureTimes[i])):
-				tij = this.failureTimes[i][j]
-				# add failure times
-				if(not t.contains(tij)): t.append(tij)				
-		t = np.sort(t);
-		print(t)
-		
-		t = np.unique((0,t_failures,T));
-
-		# mcnf[j]: mean number of cumulative failures until time t(j)
-		# q[j]   : number of uncensored systems until time t(j)
-		MCNF = np.zeros(len(t));
-		q    = np.zeros(len(t));
-		for j in range(0,len(t)):
-			q[j] = sum(T > t[j]); 
-			for i in range(0,this.numberOfSystems):
-				if(T[i] > t[j]):
-					MCNF[j] = MCNF[j] + sum(this.systems(i).failureTimes <= t(j));
-		MCNF = MCNF/q; # adjust the average
-
-		mcnf.failureTimes = t;
-		mcnf.meanCumulativeNumberOfFailures = MCNF;
-		mcnf.numberOfUncensoredSystems = q;
-		return mcnf
 
 	def sample(this,index,show=False):
 		data = RepairableData()
@@ -211,7 +210,7 @@ class RepairableModelPLP(object):
 	def CMLE_M(this,data):
 		# See [Ringdon2000] pp. 210
 		m = np.zeros(data.numberOfSystems);
-		for i in range(0,data.numberOfSystems):
+		for i in range(data.numberOfSystems):
 			ti = data.failureTimes[i];
 			Ti = data.censorTimes[i];
 			if(len(ti) > 0):
@@ -224,7 +223,7 @@ class RepairableModelPLP(object):
 	def CMLE_beta(this,M,data):
 		# See [Ringdon2000] pp. 210
 		k = 0;
-		for i in range(0,data.numberOfSystems):
+		for i in range(data.numberOfSystems):
 			ti = data.failureTimes[i];
 			Ti = data.censorTimes[i];
 			k  = k + np.sum(np.log(Ti/ti));
