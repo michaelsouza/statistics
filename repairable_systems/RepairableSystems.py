@@ -1,7 +1,6 @@
 from mpmath import mp
 import numpy as np
 import matplotlib.pyplot as plt
-import numpy as np
 
 # Bootstrap ========================================================================
 def bootci(nboot, bootfun, data):
@@ -60,7 +59,7 @@ class MCNF(object):
 		this.numberOfUncensoredSystems = q;
 		this.maxCensorTimes = np.max(T);
 
-	def show(this):
+	def plot(this):
 		t    = this.failureTimes;
 		mcnf = this.meanCumulativeNumberOfFailures
 		x = np.zeros(4 * (len(t)-1));
@@ -79,18 +78,17 @@ class MCNF(object):
 		plt.ylim((-0.02,np.max(y) *1.05));
 		plt.title('Mean Cumulative Number of Failures');
 		plt.xlabel('time');
-		plt.ylabel('Number of Failures');
-		plt.show()
+		plt.ylabel('Number of Failures');		
 
 
 	def eval(this, t):
-		# bracket
-		index = 0;
-		for i in range(len(this.failureTimes)):
-			if(this.failureTimes[i] > t): 
-				index = i - 1
-				break				
-		return this.meanCumulativeNumberOfFailures[i]
+         # bracket
+         index = 0;
+         for i in range(len(this.failureTimes)):
+             if(this.failureTimes[i] > t): 
+                 index = i - 1; 
+                 break
+         return this.meanCumulativeNumberOfFailures[index]
 		
 class RepairableData(object):
 	def __init__(this, filename=None,show=False):
@@ -131,8 +129,7 @@ class RepairableData(object):
 		plt.ylabel('System ID')
 		plt.xlabel('Failure Times') 
 		plt.ylim(0,this.numberOfSystems + 1)
-		plt.title('Repairable Data (CMR: {}, CPM: {})'.format(this.CMR,this.CPM))
-		plt.show()
+		plt.title('Repairable Data (CMR: {}, CPM: {})'.format(this.CMR,this.CPM))		
 
 	def sample(this,index,show=False):
 		data = RepairableData()
@@ -195,16 +192,15 @@ class RepairableModelPLP(object):
 
 	# BOOTSTRAP ====================================================================
 	def bootstrap(this, data, verbose=False):
+		# set estimatives
+		(beta,theta) = this.CMLE(data);		
+		tau = this.calc_tau(beta,theta,data);
+		H   = this.ExpectedCostPerUnitOfTime(beta,theta,tau,data);     
+		
 		# call bootstrap
 		nboot = 10000;
-		[ci,bootstat] = bootci(nboot,this.bootfun,data);
-
-		# set estimatives
-		beta  = bootstat[0];
-		theta = bootstat[1];
-		tau   = bootstat[2];
-		H     = bootstat[3];
-
+		[ci,bootstat] = bootci(nboot,this.bootfun,data);		
+		
 		# set confidence intervals
 		ci = {'beta':ci[0],'theta':ci[1],'tau':ci[2],'H':ci[3]}
 
@@ -260,6 +256,42 @@ class RepairableModelPLP(object):
 		theta = sum(T**beta / M)**(1/beta);
 		return theta
 
+
+# RepairableModelG =================================================================
+class RepairableModelGPulcini:
+	def __init__(this, data,Algorithm="bootstrap",verbose=True):       
+		if(Algorithm=="bootstrap"):
+			(beta,theta,tau,H,ci) = this.bootstrap(data)
+            
+		tau = this.calc_tau(beta, theta, data)
+		if(verbose):
+			print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta , ci['beta' ][0], ci['beta' ][1]));
+			print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]));
+			print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}]'.format(tau  , ci['tau'  ][0], ci['tau'  ][1]));
+			print('H ................ {:9.3g} [{:9.3g}, {:9.3g}]'.format(H    , ci['H'    ][0], ci['H'    ][1]));
+			# print('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L1'));
+			# print('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L2'));        
+    
+	def intensity(this,beta,gamma,theta):
+		return beta * (1 - np.exp(-u**gamma/theta))        
+    
+	# BOOTSTRAP ====================================================================
+	def bootstrap(this, data, verbose=False):
+		# set estimatives
+		(beta,theta) = this.CMLE(data);
+		tau = this.calc_tau(beta,theta,data);
+		H   = this.ExpectedCostPerUnitOfTime(beta,theta,tau,data);     
+		
+		# call bootstrap
+		nboot = 10000;
+		[ci,bootstat] = bootci(nboot,this.bootfun,data);		
+		
+		# set confidence intervals
+		ci = {'beta':ci[0],'theta':ci[1],'tau':ci[2],'H':ci[3]}
+
+		return (beta,gamma,theta)
+    
+
 def plot_solution(model, data):
 	data.plot_mcnf()
 # Execution ========================================================================
@@ -267,7 +299,7 @@ filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni200
 data = RepairableData(filename)
 # print(data.failureTimes)
 # data.plot_failures()
-data.plot_mcnf()
+# data.plot_mcnf()
 # RepairableModelPLP(data)
 # print(mp.meijerg([[0],[]],[[0],[]],.5))
 
