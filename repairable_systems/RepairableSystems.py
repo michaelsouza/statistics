@@ -74,7 +74,7 @@ class MCNF(object):
 			j += 4;
 		print(x)
 		print(y)
-		plt.plot(x,y,'k.-')
+		plt.plot(x,y,'k-')
 		plt.xlim((0,this.maxCensorTimes * 1.05))
 		plt.ylim((-0.02,np.max(y) *1.05));
 		plt.title('Mean Cumulative Number of Failures');
