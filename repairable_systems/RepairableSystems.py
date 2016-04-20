@@ -46,17 +46,51 @@ class MCNF(object):
 		mcnf = np.zeros(len(t));
 		q    = np.zeros(len(t));
 		for j in range(len(t)):
-			q[j] = sum(T >= t[j]); 
+			q[j] = np.sum(T > t[j]); 
 			for i in range(data.numberOfSystems):
 				if(T[i] > t[j]):
 					mcnf[j] = mcnf[j] + sum(data.failureTimes[i] <= t[j]);		
+		
 		# adjust the average
 		for j in range(len(q)):
-			mcnf[j] = mcnf[j] / q[j]
+			mcnf[j] = mcnf[j] / q[j] if q[j] > 0 else 0			
 
 		this.failureTimes = t;
 		this.meanCumulativeNumberOfFailures = mcnf;
 		this.numberOfUncensoredSystems = q;
+		this.maxCensorTimes = np.max(T);
+
+	def show(this):
+		t    = this.failureTimes;
+		mcnf = this.meanCumulativeNumberOfFailures
+		x = np.zeros(4 * (len(t)-1));
+		y = np.zeros(len(x));
+		j = 0;
+		for i in range(len(t)-1):		
+			x[j] = t[i]
+			x[(j+1):(j+4)] = t[i+1]				
+			y[j:(j+3)] = mcnf[i]
+			y[j+3] = mcnf[i+1]
+			j += 4;
+		print(x)
+		print(y)
+		plt.plot(x,y,'k.-')
+		plt.xlim((0,this.maxCensorTimes * 1.05))
+		plt.ylim((-0.02,np.max(y) *1.05));
+		plt.title('Mean Cumulative Number of Failures');
+		plt.xlabel('time');
+		plt.ylabel('Number of Failures');
+		plt.show()
+
+
+	def eval(this, t):
+		# bracket
+		index = 0;
+		for i in range(len(this.failureTimes)):
+			if(this.failureTimes[i] > t): 
+				index = i - 1
+				break				
+		return this.meanCumulativeNumberOfFailures[i]
 		
 class RepairableData(object):
 	def __init__(this, filename=None,show=False):
@@ -79,8 +113,14 @@ class RepairableData(object):
 			this.numberOfSystems = len(times)
 			this.failureTimes = [t[0:-1] for t in times]
 			this.censorTimes = [t[-1] for t in times]
-			this.mcnf = MCNF(this)
+			this.__mcnf = MCNF(this)
 			if(show): this.show()
+
+	def mcnf(this, t):
+		return this.__mcnf.eval(t)
+
+	def plot_mcnf(this):
+		this.__mcnf.show()
 
 	def plot_failures(this):
 		for i in range( this.numberOfSystems):
@@ -93,22 +133,6 @@ class RepairableData(object):
 		plt.ylim(0,this.numberOfSystems + 1)
 		plt.title('Repairable Data (CMR: {}, CPM: {})'.format(this.CMR,this.CPM))
 		plt.show()
-
-	def plot_mcnf(this):
-		t = this.failureTimes;
-		x = zeros(4 * (length(t)-1), 1);
-		y = zeros(size(x));
-		j = 0;
-		for i in range(len(t)-1):
-			x[(j+1):(j+4)] = [t(i), t(i+1), t(i+1), t(i+1)];
-			y[(j+1):(j+4)] = [MCNF(i),MCNF(i),MCNF(i),MCNF(i+1)];
-			j = j + 4;
-		plot(x,y,'.-','DisplayName','MCNF')
-		xlim((0,max(this.censorTimes) * 1.05))
-		ylim((-0.02,max(y) *1.05));
-		title('Mean Cumulative Number of Failures');
-		xlabel('time');
-		ylabel('Number of Failures');
 
 	def sample(this,index,show=False):
 		data = RepairableData()
@@ -243,7 +267,7 @@ filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni200
 data = RepairableData(filename)
 # print(data.failureTimes)
 # data.plot_failures()
-# data.plot_mcnf()
+data.plot_mcnf()
 # RepairableModelPLP(data)
 # print(mp.meijerg([[0],[]],[[0],[]],.5))
 
