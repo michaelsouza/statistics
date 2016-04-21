@@ -1,6 +1,8 @@
 from mpmath import mp
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.optimize as opt
+import scipy.integrate as integrate
 
 # Bootstrap ========================================================================
 def bootci(nboot, bootfun, data):
@@ -205,11 +207,9 @@ class RepairableModelPLP(object):
 	# BOOTSTRAP ====================================================================
 	def bootstrap(this, data, verbose=False):
 		# set estimatives (full data)
-		(beta,theta) = this.CMLE(data);		
-		tau = this.calc_tau(beta,theta,data);
-		H   = this.ExpectedCostPerUnitOfTime(beta,theta,tau,data);     
+		(beta,theta,tau,H) = this.bootfun(data);		
 		
-		# call bootstrap
+		# calc confidence interval (ci) using bootstrap
 		nboot = 10000;
 		[ci,bootstat] = bootci(nboot,this.bootfun,data);		
 		
@@ -272,36 +272,109 @@ class RepairableModelPLP(object):
 class RepairableModelGPulcini:
 	def __init__(this, data,Algorithm="bootstrap",verbose=True):       
 		if(Algorithm=="bootstrap"):
-			(beta,theta,tau,H,ci) = this.bootstrap(data)
-            
-		tau = this.calc_tau(beta, theta, data)
+			(beta,gamma,theta,tau,H,ci) = this.bootstrap(data)
+
+		this.beta  = beta
+		this.gamma = gamma
+		this.theta = theta
+		this.tau   = tau
+		this.H     = H
+		this.ci    = ci
+
 		if(verbose):
 			print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta , ci['beta' ][0], ci['beta' ][1]));
+			print('gamma ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['gamma'][0], ci['gamma'][1]));
 			print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]));
 			print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}]'.format(tau  , ci['tau'  ][0], ci['tau'  ][1]));
 			print('H ................ {:9.3g} [{:9.3g}, {:9.3g}]'.format(H    , ci['H'    ][0], ci['H'    ][1]));
 			# print('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L1'));
 			# print('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L2'));        
     
-	def intensity(this,beta,gamma,theta):
-		return beta * (1 - np.exp(-u**gamma/theta))        
-    
+	def intensity(this,beta,gamma,theta,t):
+		return beta * (1 - np.exp(-t**gamma/theta))
+
+	def calc_tau(this,beta,gamma,theta,data,bracket=False):
+		# using a nonlinear solver (fsolve)
+		# ToDo(1): Add derivative of gap (fprime)
+		# ToDo(2): Check if it is better to use args instead of lambda functions 
+	
+		kappa = data.CPM / data.CMR
+		G1223 = lambda z: mp.meijerg((z**gamma)/theta)
+		gap   = lambda tau: kappa + beta * tau * G1223(tau) 
+
+		# plot to do visual bracketing
+		if(bracket):
+			tau  = np.linspace(1E2,1E4)
+			gtau = np.zeros(len(tau))
+			for i in range(len(tau)):
+				gtau[i] = gap(tau[i])
+			plt.plot(tau,gtau)
+			plt.show()
+			plt.set_xlabel('tau')
+			plt.set_ylabel('gap(tau)')
+			plt.set_title('Use this plot to bracket tau.')
+
+		# call nonlinear solver
+		x0 = 6.52E3; # from ModelPLP 
+		return opt.fsolve(gap,x0,args=(),fprime=None)
+
+	def calc_params(this, data):
+		# ToDo: Check if it is better to use args instead of lambda functions 	
+		gap = lambda z: this.gap_params(data,z[0],z[1],z[2])
+		
+		x0 = # from ModelPulcini
+		z  = opt.fsolve(gap,x0,args=(),fprime=None)
+		return z[0],z[1],z[2]
+
+	def gap_params(this,data,beta,gamma,theta):
+		# using a nonlinear solver
+		G1334 = lambda Ti,g,t : mp.meijerg(Ti**g/t)
+		G1445 = lambda Ti,g,t : mp.meijerg(T**g/t)
+		G1112 = lambda tij,g,t: mp.meijerg(tij**g/t)
+		G1001 = lambda tij,g,t: mp.meijerg(tij**g/t)
+
+		# 		
+
+	def plot(this,axis=plt):
+		tmax = np.max(this.data.censorTimes)
+		t  = np.linspace(0,tmax)
+		Nt = this.ExpectedNumberOfFailures(this.beta, this.gamma, this.theta, t)
+		axis.plot(t,Nt,label='PLP')
+
+	def ExpectedNumberOfFailures(this,beta,gamma,theta,t):
+		# Calc integral(intensity(s),s=0..t) 
+		f = lambda t: this.intensity(beta,gamma,theta,t)
+		Nt = np.zeros(len(t))
+		for i in range(len(t)):
+			Nt[i] = integrate.quad(f,0,t[i])
+		return Nt
+
+	def ExpectedCostPerUnitOfTime(this, beta, gamma, theta, tau, data):
+		# Calculates H(t), the expected cost per unit of time
+		# See [Gilardoni2007] eq.(2) pp. 49
+		H = (data.CPM + data.CMR * this.ExpectedNumberOfFailures(beta,gamma,theta,tau)) / tau;
+		return H
+
 	# BOOTSTRAP ====================================================================
 	def bootstrap(this, data, verbose=False):
-		# set estimatives
-		(beta,theta) = this.CMLE(data);
-		tau = this.calc_tau(beta,theta,data);
-		H   = this.ExpectedCostPerUnitOfTime(beta,theta,tau,data);     
+		# set estimatives (full data)
+		(beta,gamma,theta,tau,H) = this.bootfun(data);		
 		
 		# call bootstrap
 		nboot = 10000;
 		[ci,bootstat] = bootci(nboot,this.bootfun,data);		
 		
 		# set confidence intervals
-		ci = {'beta':ci[0],'theta':ci[1],'tau':ci[2],'H':ci[3]}
+		ci = {'beta':ci[0],'gamma':ci[1],'theta':ci[2],'tau':ci[3],'H':ci[4]}
 
-		return (beta,gamma,theta)
-    
+		return (beta,gamma,theta,tau,H,ci)
+
+	def bootfun(this, data):
+		# set beta, gamma, theta using a nonlinear solver
+		(beta,gamma,theta) = this.calc_params(data);	
+		tau = this.calc_tau(beta,gamma,theta,data);
+		H   = this.ExpectedCostPerUnitOfTime(beta,gamma,theta,tau,data);
+		return (beta, gamma, theta, tau, H)
 
 def plot_solution(model, data):
 	data.plot_mcnf()
