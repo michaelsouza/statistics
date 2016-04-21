@@ -59,7 +59,7 @@ class MCNF(object):
 		this.numberOfUncensoredSystems = q;
 		this.maxCensorTimes = np.max(T);
 
-	def plot(this):
+	def plot(this, axis=plt):
 		t    = this.failureTimes;
 		mcnf = this.meanCumulativeNumberOfFailures
 		x = np.zeros(4 * (len(t)-1));
@@ -71,14 +71,12 @@ class MCNF(object):
 			y[j:(j+3)] = mcnf[i]
 			y[j+3] = mcnf[i+1]
 			j += 4;
-		print(x)
-		print(y)
-		plt.plot(x,y,'k-')
-		plt.xlim((0,this.maxCensorTimes * 1.05))
-		plt.ylim((-0.02,np.max(y) *1.05));
-		plt.title('Mean Cumulative Number of Failures');
-		plt.xlabel('time');
-		plt.ylabel('Number of Failures');		
+		axis.plot(x,y,'k-')
+		axis.set_xlim((0,this.maxCensorTimes * 1.05))
+		axis.set_ylim((-0.02,np.max(y) *1.05));
+		axis.set_title('Mean Cumulative Number of Failures');
+		axis.set_xlabel('time');
+		axis.set_ylabel('Number of Failures');		
 
 
 	def eval(this, t):
@@ -115,21 +113,21 @@ class RepairableData(object):
 			if(show): this.show()
 
 	def mcnf(this, t):
-		return this.__mcnf.eval(t)
+		return this.__mcnf.plot(t)
 
-	def plot_mcnf(this):
-		this.__mcnf.show()
+	def plot_mcnf(this, axis=plt):
+		this.__mcnf.plot(axis)
 
-	def plot_failures(this):
+	def plot_failures(this, axis=plt):
 		for i in range( this.numberOfSystems):
-			plt.plot([0, this.censorTimes[i]],[i+1,i+1],'b-')
-			plt.plot(this.censorTimes[i],i+1,'yo')
-			plt.plot(this.failureTimes[i],[i+1 for j in range(len(this.failureTimes[i]))],'ro')
+			axis.plot([0, this.censorTimes[i]],[i+1,i+1],'b-')
+			axis.plot(this.censorTimes[i],i+1,'yo')
+			axis.plot(this.failureTimes[i],[i+1 for j in range(len(this.failureTimes[i]))],'ro')
 
-		plt.ylabel('System ID')
-		plt.xlabel('Failure Times') 
-		plt.ylim(0,this.numberOfSystems + 1)
-		plt.title('Repairable Data (CMR: {}, CPM: {})'.format(this.CMR,this.CPM))		
+		axis.set_ylabel('System ID')
+		axis.set_xlabel('Failure Times') 
+		axis.set_ylim(0,this.numberOfSystems + 1)
+		axis.set_title('Repairable Data (CMR: {}, CPM: {})'.format(this.CMR,this.CPM))		
 
 	def sample(this,index,show=False):
 		data = RepairableData()
@@ -144,12 +142,20 @@ class RepairableData(object):
 # RepairableModelPLP ===============================================================
 class RepairableModelPLP(object):
 	def __init__(this, data, Algorithm="bootstrap", verbose=True):
+		this.data = data;
+
 		if(Algorithm=="bootstrap"):
 			(beta,theta,tau,H,ci) = this.bootstrap(data)
 
-		tau = this.calc_tau(beta, theta, data)
+		# set model parameters
+		this.beta  = beta;
+		this.theta = theta;
+		this.tau   = tau;
+		this.H     = H;
+		this.ci    = ci;
 
 		if(verbose):
+			print('# Model: PLP --------------------------------------')
 			print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta , ci['beta' ][0], ci['beta' ][1]));
 			print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]));
 			print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}]'.format(tau  , ci['tau'  ][0], ci['tau'  ][1]));
@@ -190,9 +196,15 @@ class RepairableModelPLP(object):
 		gap = tau * this.intensity(beta,theta,tau) - this.ExpectedNumberOfFailures(beta,theta,tau) - data.CPM/data.CMR;
 		return gap
 
+	def plot(this,axis=plt):
+		tmax = np.max(this.data.censorTimes)
+		t  = np.linspace(0,tmax)
+		Nt = this.ExpectedNumberOfFailures(this.beta, this.theta, t)
+		axis.plot(t,Nt,label='PLP')
+
 	# BOOTSTRAP ====================================================================
 	def bootstrap(this, data, verbose=False):
-		# set estimatives
+		# set estimatives (full data)
 		(beta,theta) = this.CMLE(data);		
 		tau = this.calc_tau(beta,theta,data);
 		H   = this.ExpectedCostPerUnitOfTime(beta,theta,tau,data);     
@@ -256,7 +268,6 @@ class RepairableModelPLP(object):
 		theta = sum(T**beta / M)**(1/beta);
 		return theta
 
-
 # RepairableModelG =================================================================
 class RepairableModelGPulcini:
 	def __init__(this, data,Algorithm="bootstrap",verbose=True):       
@@ -294,12 +305,24 @@ class RepairableModelGPulcini:
 
 def plot_solution(model, data):
 	data.plot_mcnf()
+
 # Execution ========================================================================
 filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni2007.txt"
 data = RepairableData(filename)
-# print(data.failureTimes)
-# data.plot_failures()
-# data.plot_mcnf()
-# RepairableModelPLP(data)
-# print(mp.meijerg([[0],[]],[[0],[]],.5))
 
+# plot data
+fig  = plt.figure()
+# axis = fig.add_subplot(211)
+# data.plot_failures(axis)
+
+# create models
+modelPLP = RepairableModelPLP(data)
+
+# plot models
+axis = fig.add_subplot(212) 
+data.plot_mcnf(axis)
+modelPLP.plot(axis)
+axis.legend(loc='upper left')
+
+plt.show()
+# print(mp.meijerg([[0],[]],[[0],[]],.5))
