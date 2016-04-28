@@ -96,8 +96,8 @@ class MCNF(object):
           for i in range(data.numberOfSystems):
                # add censor times
                if T[i] not in t: t.append(T[i])
-               for j in range(len(data.failureTimes[i])):
-                    tij = data.failureTimes[i][j]
+               for j in range(len(data.failures[i])):
+                    tij = data.failures[i][j]
                     # add failure times
                     if tij not in t: t.append(tij)
           t = np.sort(t)          
@@ -110,19 +110,19 @@ class MCNF(object):
                q[j] = np.sum(T > t[j]); 
                for i in range(data.numberOfSystems):
                     if(T[i] > t[j]):
-                         mcnf[j] = mcnf[j] + sum(data.failureTimes[i] <= t[j]);          
+                         mcnf[j] = mcnf[j] + sum(data.failures[i] <= t[j]);          
           
           # adjust the average
           for j in range(len(q)):
                mcnf[j] = mcnf[j] / q[j] if q[j] > 0 else 0               
 
-          this.failureTimes = t;
+          this.failures = t;
           this.meanCumulativeNumberOfFailures = mcnf;
           this.numberOfUncensoredSystems = q;
           this.maxCensorTimes = np.max(T);
 
      def plot(this, axis=plt):
-          t    = this.failureTimes;
+          t    = this.failures;
           mcnf = this.meanCumulativeNumberOfFailures
           x = np.zeros(4 * (len(t)-1));
           y = np.zeros(len(x));
@@ -144,20 +144,22 @@ class MCNF(object):
      def eval(this, t):
          # bracket
          index = 0;
-         for i in range(len(this.failureTimes)):
-             if(this.failureTimes[i] > t): 
+         for i in range(len(this.failures)):
+             if(this.failures[i] > t): 
                  index = i - 1; 
                  break
          return this.meanCumulativeNumberOfFailures[index]
           
 class RepairableData(object):
+     # failures    : list of lists with the time of each failure for each system
+     # allFailures : list of each failure
      def __init__(this, filename=None,show=False):
           # create an empty data
           if(filename is None): 
                this.CMR = 0
                this.CPM = 0
                this.numberOfSystems = 0
-               this.failureTimes = []
+               this.failures = []
                this.censorTimes = []          
                return
 
@@ -170,8 +172,15 @@ class RepairableData(object):
                # convert from time from hours to thousand of hours
                times = [np.fromstring(data,dtype=np.float, sep=' ')/1000 for data in rawdata]                            
                this.numberOfSystems = len(times)
-               this.failureTimes = [t[0:-1] for t in times]
-               this.censorTimes = [t[-1] for t in times]
+               # read failures
+               this.failures = [t[0:-1] for t in times]               
+               this.allFailures = []
+               for fi in this.failures:
+                    for fij in fi:
+                         this.allFailures.append(fij)
+               this.allFailures = np.array(this.allFailures)
+               this.numberOfFailures = np.sum([len(failures) for failures in this.failures])                    
+               this.censorTimes = np.array([t[-1] for t in times])
                this.__mcnf = MCNF(this)
                if(show): this.show()
 
@@ -185,7 +194,7 @@ class RepairableData(object):
           for i in range( this.numberOfSystems):
                axis.plot([0, this.censorTimes[i]],[i+1,i+1],'b-')
                axis.plot(this.censorTimes[i],i+1,'yo')
-               axis.plot(this.failureTimes[i],[i+1 for j in range(len(this.failureTimes[i]))],'ro')
+               axis.plot(this.failures[i],[i+1 for j in range(len(this.failures[i]))],'ro')
 
           axis.set_ylabel('System ID')
           axis.set_xlabel('Failure Times (x1000 hours)') 
@@ -197,7 +206,7 @@ class RepairableData(object):
           data.CMR = this.CMR
           data.CPM = this.CPM
           data.censorTimes = [this.censorTimes[i] for i in index]
-          data.failureTimes = [this.failureTimes[i] for i in index]
+          data.failures = [this.failures[i] for i in index]
           data.numberOfSystems = len(index)
           if(show): data.show()
           return data
@@ -311,7 +320,7 @@ class RepairableModelPLP(object):
           # See [Ringdon2000] pp. 210
           m = np.zeros(data.numberOfSystems);
           for i in range(data.numberOfSystems):
-               ti = data.failureTimes[i];
+               ti = data.failures[i];
                Ti = data.censorTimes[i];
                if(len(ti) > 0):
                     m[i] = len(ti) - (ti[-1] == Ti);
@@ -324,7 +333,7 @@ class RepairableModelPLP(object):
           # See [Ringdon2000] pp. 210
           k = 0;
           for i in range(data.numberOfSystems):
-               ti = data.failureTimes[i];
+               ti = data.failures[i];
                Ti = data.censorTimes[i];
                k  = k + np.sum(np.log(Ti/ti));
           beta = M / k;
@@ -350,14 +359,16 @@ class RepairableModelPulcini:
           this.data = data;
 
           #if(Algorithm=="bootstrap"):
-          #     (beta,theta,tau,H,ci) = this.bootstrap(data)
-          beta  = 28.85
-          theta = 8964
-          tau   = this.calc_tau(beta, theta, data, verbose=True)
+          #     (beta,theta,tau,H,ci) = this.bootstrap(data)          
+
+          print(this.gap_theta(8964, data))
+          theta = 8964  # this.calc_theta(data,verbose=True) # 8964
+          beta  = this.calc_beta(8964, data) # 28.95
+          tau   = this.calc_tau(28.95, 8964, data, verbose=False)
           H     = this.ExpectedCostPerUnitOfTime(beta, theta, tau, data)
           ci    = {'beta':(0,0),'theta':(0,0),'tau':(0,0),'H':(0,0)}
                     
-          # set model parameters
+          # # set model parameters
           this.beta  = beta;
           this.theta = theta;
           this.tau   = tau;
@@ -411,6 +422,37 @@ class RepairableModelPulcini:
              
          return tau[0]
 
+     def calc_beta(this, theta, data):
+          n = data.numberOfSystems
+          m = data.numberOfFailures
+          T = data.censorTimes     
+          s = np.sum(T - theta * (1 - np.exp(-T / theta)))
+          return (n * m) / s
+
+     def gap_theta(this, theta, data):
+          T = data.censorTimes
+          F = data.allFailures
+          X = np.exp(F/theta)
+          beta = this.calc_beta(theta, data)
+          gap  = beta * np.sum(1-np.exp(T/theta) * (1+T/theta)) - np.sum(F / (theta**2 * (X - 1)))
+          return gap
+
+     def calc_theta(this, data, verbose=False):
+          # using nonlinear solver (fsolve)
+          gap = lambda theta: this.gap_theta(theta[0], data)
+          x0  = 8964 # from PLP 
+          theta = opt.fsolve(gap,x0,args=(),fprime=None,full_output=False)
+
+          if(verbose):
+             (theta,info,flag,msg) = opt.fsolve(gap,x0,args=(),fprime=None,full_output=True)
+             print('> calc theta')
+             print('  message: %s after %d iterations.' %(msg[:-1],info['nfev']))
+             print('  x0    = %f'%(x0))
+             print('  theta = %f'%(theta[0]))
+             print('  gap   = %e'%(gap(theta)))
+
+          return theta[0]
+
      def plot(this,axis=plt):
           tmax = np.max(this.data.censorTimes)
           t  = np.linspace(0,tmax)
@@ -454,11 +496,7 @@ class RepairableModelPulcini:
          n     = 0
          T     = 0
          beta  = n / T - theta * (1 - np.exp(-T/theta))
-         return (beta, theta)
-    
-     def gap_theta(this, data, theta):
-         print('gap_theta')
-         return 0
+         return (beta, theta)    
         
 
 # <markdowncell>
@@ -480,7 +518,6 @@ class RepairableModelGA:
           tau   = this.calc_tau(beta, gamma, theta, data, verbose=True)
           H     = this.ExpectedCostPerUnitOfTime(beta, theta, tau, data)
           ci    = {'beta':(0,0),'gamma':(0,0),'theta':(0,0),'tau':(0,0),'H':(0,0)}
-                
              
           this.beta  = beta
           this.gamma = gamma
@@ -521,7 +558,7 @@ class RepairableModelGA:
                print('  tau = %f'%(tau[0]))
                print('  gap = %e'%(gap(tau)))          
           
-          return tau[0]
+          return tau[0]     
 
      def calc_params(this, data):
           # ToDo: Check if it is better to use args instead of lambda functions      
@@ -597,9 +634,9 @@ filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni200
 data = RepairableData(filename)
 
 # create models
-#modelPLP     = RepairableModelPLP(data)
+# modelPLP     = RepairableModelPLP(data)
 modelPulcini = RepairableModelPulcini(data, verbose=True)
-modelGA      = RepairableModelGA(data, verbose=True)
+# modelGA      = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
@@ -609,7 +646,7 @@ if(options['graphics']):
     # plot models
     axis = fig.add_subplot(212) 
     data.plot_mcnf(axis)
-    modelPLP.plot(axis)
+    # modelPLP.plot(axis)
     modelPulcini.plot(axis)
     axis.legend(loc='upper left')   
     # plot
