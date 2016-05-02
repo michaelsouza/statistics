@@ -45,11 +45,11 @@
 
 #%matplotlib inline
 from mpmath import mp
-import matplotlib
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.optimize as opt
 import scipy.integrate as integrate
+import matplotlib
 
 # <markdowncell>
 
@@ -625,7 +625,7 @@ class RepairableModelGA:
 
 # <codecell>
 
-options = {'graphics':False}
+options = {'graphics':True}
 
 # set instance
 filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni2007.txt"
@@ -634,24 +634,25 @@ filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni200
 data = RepairableData(filename)
 
 # create models
-# modelPLP     = RepairableModelPLP(data)
+#modelPLP     = RepairableModelPLP(data)
 modelPulcini = RepairableModelPulcini(data, verbose=True)
 # modelGA      = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
     fig  = plt.figure()
+    fig.set_size_inches(10,10)
     axis = fig.add_subplot(211)
     data.plot_failures(axis)
     # plot models
     axis = fig.add_subplot(212) 
     data.plot_mcnf(axis)
-    # modelPLP.plot(axis)
+#    modelPLP.plot(axis)
     modelPulcini.plot(axis)
     axis.legend(loc='upper left')   
     # plot
     plt.show()
-
+    
 # <markdowncell>
 
 # <a href='#index'>Return to index</a>
