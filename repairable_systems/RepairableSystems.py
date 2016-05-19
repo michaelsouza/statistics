@@ -442,7 +442,6 @@ class RepairableModelPulcini:
           # using nonlinear solver (fsolve)
           gap = lambda theta: this.gap_theta(theta[0], data)
           x0  = 8964 # from PLP 
-          theta = opt.fsolve(gap,x0,args=(),fprime=None,full_output=False)
 
           if(verbose):
              (theta,info,flag,msg) = opt.fsolve(gap,x0,args=(),fprime=None,full_output=True)
@@ -451,6 +450,8 @@ class RepairableModelPulcini:
              print('  x0    = %f'%(x0))
              print('  theta = %f'%(theta[0]))
              print('  gap   = %e'%(gap(theta)))
+          else:
+             theta = opt.fsolve(gap,x0,args=(),fprime=None,full_output=False)
 
           return theta[0]
 
@@ -513,12 +514,6 @@ class RepairableModelGA:
           if(verbose): print('# Model: GA     ----------------------------------')
           this.data = data
           
-          beta  = 16.64
-          gamma = 1.214
-          theta = 8693          
-          this.gap_params(data, beta, gamma, theta, verbose=True)
-          return 
-          
           if(Algorithm=="bootstrap"):
               (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'fsolve',verbose=True)
 
@@ -567,67 +562,38 @@ class RepairableModelGA:
               print('  Estimating parameters using %s method' % (method))
                        
           # start point (z) from curve fit using PLP and Matlab  
-          beta  = 16.64
-          gamma = 1.214
-          theta = 8693
-          z = np.array([beta, gamma, theta])          
-          if(method is 'minimize'):
-              loglike = lambda z: -this.loglikelihood(data,z[0],z[1],z[2])
-              z = opt.minimize(loglike,z,args=(),method='Nelder-Mead')
-          elif(method is 'fsolve'):
-              noneq = lambda z: this.gap_params(data, z[0],z[1],z[2])
-              z = opt.fsolve(noneq, z)
-          else:
-              raise Exception('Unkown method %s' % (method))
+          beta  = 16.6
+          gamma = 1.2
+          theta = 8690
+          z = np.array([beta, gamma, theta])
+          if(method is 'fsolve'):
+              noneq = lambda z: this.gap_params(data, z[0], z[1], z[2])
+              if(verbose): 
+                  (z,info,flag,msg) = opt.fsolve(noneq, z, full_output=True)
+                  gap = noneq(z)
+                  print('> gap params')
+                  print('  message: %s after %d iterations.' %(msg[:-1],info['nfev']))
+                  print('  gap beta  = %g'%(gap[0]))
+                  print('  gap gamma = %g'%(gap[1]))
+                  print('  gap theta = %g'%(gap[2]))
+              else:
+                  z = opt.fsolve(noneq, z)
           return z[0],z[1],z[2]
 
-
-     def loglikelihood(this,data,beta,gamma,theta):
-          # using a nonlinear solver
-          G1112 = lambda z: mp.meijerg([[1-1/gamma],[]],[[0],[-1/gamma]],(z**gamma)/theta)
-          G1001 = lambda z: mp.meijerg([[],[]],[[],[0]],(z**gamma)/theta)
-          
-          # log-likelihood
-#          Gi  = np.zeros(data.censorTimes.shape)
-#          Gij = np.zeros(data.allFailures.shape)
-          gap = 0
-          for Ti in data.censorTimes:
-              gap -= Ti * (1 - G1112(Ti))
-          gap *= beta
-          for tij in data.allFailures:
-              Gij = G1001(tij);
-              if((1 - Gij) <= 0):
-                  raise Exception('The argument of log is negative.')
-              gap += mp.ln(beta * (1 - Gij))
-          
-          return gap
-     
      def gap_params(this, data, beta, gamma, theta, verbose=False):
           G1112A = lambda z: mp.meijerg([[1-1/gamma],[]],[[0],[-1/gamma]],(z**gamma)/theta)
-          G1112B = lambda z: mp.meijerg([[0],[]],[[0],[1]],(z**gamma)/theta)          
-          G1223  = lambda z: mp.meijerg([[0],[1-1/gamma]],[[0,-1/gamma],[1]],(z**gamma)/theta)
-          G1001  = lambda z: mp.meijerg([[],[]],[[],[0]],(z**gamma)/theta)
-          G1334  = lambda z: mp.meijerg([[0],[1-1/gamma,1-1/gamma]],[[0,1-1/gamma,1-1/gamma],[1]],(z**gamma)/theta)
-          G1445  = lambda z: mp.meijerg([[0],[1-1/gamma,1-1/gamma,1-1/gamma]],[[0,1-1/gamma,1-1/gamma,1-1/gamma],[1]],(z**gamma)/theta)
+          G1112B = lambda z: mp.meijerg([[0],[]],[[0],[1]],(z**gamma)/theta)
+          G1223  = lambda z: mp.meijerg([[0,1-1/gamma],[]],[[0],[-1/gamma,1]],(z**gamma)/theta)
+          G1001  = lambda z: mp.meijerg([[],[]],[[0],[]],(z**gamma)/theta)
+          G1334  = lambda z: mp.meijerg([[0,1-1/gamma,1-1/gamma],[]],[[0],[-1/gamma,-1/gamma,1]],(z**gamma)/theta)
+          G1445  = lambda z: mp.meijerg([[0,1-1/gamma,1-1/gamma,1-1/gamma],[]],[[0],[-1/gamma,-1/gamma,-1/gamma,1]],(z**gamma)/theta)
           
           # gap beta
           si = 0
           for Ti in data.censorTimes:
-              si += Ti * (1 - 1/gamma * G1112A(Ti))
-          sij = 0
-          for tij in data.allFailures:
-              sij += mp.ln(beta * (1 - G1001(tij)))
-          gap_beta = -beta * si + sij
-                    
-          # gap theta
-          si  = 0
-          for Ti in data.censorTimes:
-              si += Ti * G1223(Ti)          
-          sij = 0
-          for tij in data.allFailures:
-              sij += G1112B(tij)/(1-G1001(tij))
-          gap_theta = (beta * theta / gamma) * si - theta * sij
-          
+              si += Ti * (1 - G1112A(Ti) / gamma)
+          gap_beta = -si + len(data.allFailures) / beta
+                       
           # gap gamma
           si = 0
           for Ti in data.censorTimes:
@@ -637,6 +603,15 @@ class RepairableModelGA:
               sij += (mp.ln(tij) * G1112B(tij))/(1 - G1001(tij))
           gap_gamma = (beta / gamma) * si - sij
           
+          # gap theta
+          si  = 0
+          for Ti in data.censorTimes:
+              si += Ti * G1223(Ti)          
+          sij = 0
+          for tij in data.allFailures:
+              sij += G1112B(tij)/(1-G1001(tij))
+          gap_theta = (beta * theta / gamma) * si - theta * sij
+       
           if(verbose):
               print('  gap beta  = %g' % (gap_beta))
               print('  gap gamma = %g' % (gap_gamma))
@@ -698,6 +673,7 @@ class RepairableModelGA:
 # ## Running <a id='running'></a>
 
 # <codecell>
+
 modelPLP     = None
 modelPulcini = None
 modelGA      = None
@@ -710,9 +686,9 @@ filename = "data/Gilardoni2007.txt"
 data = RepairableData(filename)
 
 # create models
-#modelPLP     = RepairableModelPLP(data)
-modelPulcini = RepairableModelPulcini(data, verbose=True)
-#modelGA      = RepairableModelGA(data, verbose=True)
+# modelPLP     = RepairableModelPLP(data)
+# modelPulcini = RepairableModelPulcini(data, verbose=True)
+modelGA      = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
