@@ -513,8 +513,14 @@ class RepairableModelGA:
           if(verbose): print('# Model: GA     ----------------------------------')
           this.data = data
           
+          beta  = 16.64
+          gamma = 1.214
+          theta = 8693          
+          this.gap_params(data, beta, gamma, theta, verbose=True)
+          return 
+          
           if(Algorithm=="bootstrap"):
-              (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'MaxLikelihood',verbose=True)
+              (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'fsolve',verbose=True)
 
           this.beta  = beta
           this.gamma = gamma
@@ -562,13 +568,17 @@ class RepairableModelGA:
                        
           # start point (z) from curve fit using PLP and Matlab  
           beta  = 16.64
-          theta = 8693
           gamma = 1.214
+          theta = 8693
           z = np.array([beta, gamma, theta])          
-          if(method is 'MaxLikelihood'):
+          if(method is 'minimize'):
               loglike = lambda z: -this.loglikelihood(data,z[0],z[1],z[2])
               z = opt.minimize(loglike,z,args=(),method='Nelder-Mead')
-              
+          elif(method is 'fsolve'):
+              noneq = lambda z: this.gap_params(data, z[0],z[1],z[2])
+              z = opt.fsolve(noneq, z)
+          else:
+              raise Exception('Unkown method %s' % (method))
           return z[0],z[1],z[2]
 
 
@@ -591,6 +601,48 @@ class RepairableModelGA:
               gap += mp.ln(beta * (1 - Gij))
           
           return gap
+     
+     def gap_params(this, data, beta, gamma, theta, verbose=False):
+          G1112A = lambda z: mp.meijerg([[1-1/gamma],[]],[[0],[-1/gamma]],(z**gamma)/theta)
+          G1112B = lambda z: mp.meijerg([[0],[]],[[0],[1]],(z**gamma)/theta)          
+          G1223  = lambda z: mp.meijerg([[0],[1-1/gamma]],[[0,-1/gamma],[1]],(z**gamma)/theta)
+          G1001  = lambda z: mp.meijerg([[],[]],[[],[0]],(z**gamma)/theta)
+          G1334  = lambda z: mp.meijerg([[0],[1-1/gamma,1-1/gamma]],[[0,1-1/gamma,1-1/gamma],[1]],(z**gamma)/theta)
+          G1445  = lambda z: mp.meijerg([[0],[1-1/gamma,1-1/gamma,1-1/gamma]],[[0,1-1/gamma,1-1/gamma,1-1/gamma],[1]],(z**gamma)/theta)
+          
+          # gap beta
+          si = 0
+          for Ti in data.censorTimes:
+              si += Ti * (1 - 1/gamma * G1112A(Ti))
+          sij = 0
+          for tij in data.allFailures:
+              sij += mp.ln(beta * (1 - G1001(tij)))
+          gap_beta = -beta * si + sij
+                    
+          # gap theta
+          si  = 0
+          for Ti in data.censorTimes:
+              si += Ti * G1223(Ti)          
+          sij = 0
+          for tij in data.allFailures:
+              sij += G1112B(tij)/(1-G1001(tij))
+          gap_theta = (beta * theta / gamma) * si - theta * sij
+          
+          # gap gamma
+          si = 0
+          for Ti in data.censorTimes:
+              si += Ti * (mp.ln(Ti) * G1334(Ti) - G1445(Ti)/gamma)
+          sij = 0
+          for tij in data.allFailures:
+              sij += (mp.ln(tij) * G1112B(tij))/(1 - G1001(tij))
+          gap_gamma = (beta / gamma) * si - sij
+          
+          if(verbose):
+              print('  gap beta  = %g' % (gap_beta))
+              print('  gap gamma = %g' % (gap_gamma))
+              print('  gap theta = %g' % (gap_theta))
+          return [gap_beta, gap_gamma, gap_theta]
+          
 
      def plot(this,axis=plt):
           tmax = np.max(this.data.censorTimes)
@@ -659,8 +711,8 @@ data = RepairableData(filename)
 
 # create models
 #modelPLP     = RepairableModelPLP(data)
-#modelPulcini = RepairableModelPulcini(data, verbose=True)
-modelGA      = RepairableModelGA(data, verbose=True)
+modelPulcini = RepairableModelPulcini(data, verbose=True)
+#modelGA      = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
