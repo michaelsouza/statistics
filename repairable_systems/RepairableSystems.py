@@ -49,7 +49,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.optimize as opt
 import scipy.integrate as integrate
-import matplotlib
+from numbers import Number
+#import matplotlib
 
 # <markdowncell>
 
@@ -510,15 +511,11 @@ class RepairableModelPulcini:
 class RepairableModelGA:
      def __init__(this, data,Algorithm="bootstrap",verbose=True):
           if(verbose): print('# Model: GA     ----------------------------------')
-          #if(Algorithm=="bootstrap"):
-               #(beta,gamma,theta,tau,H,ci) = this.bootstrap(data)
-          beta  = 28.85
-          theta = 8964
-          gamma = 1
-          tau   = this.calc_tau(beta, gamma, theta, data, verbose=True)
-          H     = this.ExpectedCostPerUnitOfTime(beta, theta, tau, data)
-          ci    = {'beta':(0,0),'gamma':(0,0),'theta':(0,0),'tau':(0,0),'H':(0,0)}
-             
+          this.data = data
+          
+          if(Algorithm=="bootstrap"):
+              (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'MaxLikelihood',verbose=True)
+
           this.beta  = beta
           this.gamma = gamma
           this.theta = theta
@@ -529,7 +526,7 @@ class RepairableModelGA:
           if(verbose):
                print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta , ci['beta' ][0], ci['beta' ][1]));
                print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]));
-               print('gamma ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['gamma'][0], ci['gamma'][1]));
+               print('gamma ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(gamma, ci['gamma'][0], ci['gamma'][1]));
                print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}] x 1000 hours'.format(tau  , ci['tau'  ][0], ci['tau'  ][1]));
                print('H ................ {:9.3g} [{:9.3g}, {:9.3g}] / 1000 hours'.format(H    , ci['H'    ][0], ci['H'    ][1]));               # print('L1 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L1'));
                # print('L2 distance ...... % 9.3g\n', data.distance(@(t)this.ExpectedNumberOfFailures(t), 'L2'));        
@@ -546,8 +543,6 @@ class RepairableModelGA:
           G1223 = lambda z: mp.meijerg([[0,1-1/gamma],[]],[[0],[1,-1/gamma]],(z**gamma)/theta)
           gap   = lambda tau: kappa + beta * tau[0] * G1223(tau[0]) 
           x0    = [6.5]; # from ModelPLP 
-          print('G1223 = %f'%(G1223(x0[0])))
-          print('gap   = %f'%(gap(x0)))          
           tau   = opt.fsolve(gap,x0,args=(),fprime=None)
                               
           if(verbose):
@@ -560,60 +555,87 @@ class RepairableModelGA:
           
           return tau[0]     
 
-     def calc_params(this, data):
+     def calc_params(this, data, method, verbose=False):
           # ToDo: Check if it is better to use args instead of lambda functions      
-          gap = lambda z: this.gap_params(data,z[0],z[1],z[2])
-          
-          x0 = 1 # from ModelPulcini
-          z  = opt.fsolve(gap,x0,args=(),fprime=None)
+          if(verbose):
+              print('  Estimating parameters using %s method' % (method))
+                       
+          # start point (z) from curve fit using PLP and Matlab  
+          beta  = 16.64
+          theta = 8693
+          gamma = 1.214
+          z = np.array([beta, gamma, theta])          
+          if(method is 'MaxLikelihood'):
+              loglike = lambda z: -this.loglikelihood(data,z[0],z[1],z[2])
+              z = opt.minimize(loglike,z,args=(),method='Nelder-Mead')
+              
           return z[0],z[1],z[2]
 
-     def gap_params(this,data,beta,gamma,theta):
-          # using a nonlinear solver
-          G1334 = lambda Ti,g,t : mp.meijerg(Ti**g/t)
-          G1445 = lambda Ti,g,t : mp.meijerg(T**g/t)
-          G1112 = lambda tij,g,t: mp.meijerg(tij**g/t)
-          G1001 = lambda tij,g,t: mp.meijerg(tij**g/t)
 
-          #           
+     def loglikelihood(this,data,beta,gamma,theta):
+          # using a nonlinear solver
+          G1112 = lambda z: mp.meijerg([[1-1/gamma],[]],[[0],[-1/gamma]],(z**gamma)/theta)
+          G1001 = lambda z: mp.meijerg([[],[]],[[],[0]],(z**gamma)/theta)
+          
+          # log-likelihood
+#          Gi  = np.zeros(data.censorTimes.shape)
+#          Gij = np.zeros(data.allFailures.shape)
+          gap = 0
+          for Ti in data.censorTimes:
+              gap -= Ti * (1 - G1112(Ti))
+          gap *= beta
+          for tij in data.allFailures:
+              Gij = G1001(tij);
+              if((1 - Gij) <= 0):
+                  raise Exception('The argument of log is negative.')
+              gap += mp.ln(beta * (1 - Gij))
+          
+          return gap
 
      def plot(this,axis=plt):
           tmax = np.max(this.data.censorTimes)
           t  = np.linspace(0,tmax)
           Nt = this.ExpectedNumberOfFailures(this.beta, this.gamma, this.theta, t)
-          axis.plot(t,Nt,label='PLP')
-
-     def ExpectedNumberOfFailures(this,beta,gamma,theta,t):
+          axis.plot(t,Nt,label='GA',marker='s')
+     
+     def ExpectedNumberOfFailures(this,beta,gamma,theta,t,verbose=False):
           # Calc integral(intensity(s),s=0..t) 
           f = lambda t: this.intensity(beta,gamma,theta,t)
-          Nt = np.zeros(len(t))
-          for i in range(len(t)):
-               Nt[i] = integrate.quad(f,0,t[i])
+          
+          # t is just a number
+          if(isinstance(t,Number)):
+              Nt,abserr = integrate.quad(f,0,t)
+              if(verbose): 
+                  print('  Estimate of absolute error in quadrature %g' % (abserr))
+          else:
+              Nt = np.zeros(len(t))
+              for i in range(len(t)):
+                   Nt[i],_ = integrate.quad(f,0,t[i])
           return Nt
 
-     def ExpectedCostPerUnitOfTime(this, beta, gamma, theta, tau, data):
+     def ExpectedCostPerUnitOfTime(this, beta, gamma, theta, tau, data,verbose=False):
           # Calculates H(t), the expected cost per unit of time
           # See [Gilardoni2007] eq.(2) pp. 49
-          H = (data.CPM + data.CMR * this.ExpectedNumberOfFailures(beta,gamma,theta,tau)) / tau;
+          H = (data.CPM + data.CMR * this.ExpectedNumberOfFailures(beta,gamma,theta,tau,verbose)) / tau;
           return H
 
      # BOOTSTRAP ====================================================================
-     def bootstrap(this, data, verbose=False):
-          # set estimatives (full data)
-          (beta,gamma,theta,tau,H) = this.bootfun(data);          
+     def bootstrap(this, data, method, verbose=False):
+          # set estimatives using full data
+          (beta,gamma,theta,tau,H) = this.bootfun(data,method,verbose);        
+                              
+          # set confidence intervals using bootstrap
+#          nboot = 100;
+#          [ci,bootstat] = bootci(nboot,this.bootfun,data);          
+#          ci = {'beta':ci[0],'gamma':ci[1],'theta':ci[2],'tau':ci[3],'H':ci[4]}
+          ci = {'beta':(0,0),'gamma':(0,0),'theta':(0,0),'tau':(0,0),'H':(0,0)}
           
-          # call bootstrap
-          nboot = 10000;
-          [ci,bootstat] = bootci(nboot,this.bootfun,data);          
-          
-          # set confidence intervals
-          ci = {'beta':ci[0],'gamma':ci[1],'theta':ci[2],'tau':ci[3],'H':ci[4]}
-
           return (beta,gamma,theta,tau,H,ci)
 
-     def bootfun(this, data):
+     def bootfun(this, data, method='MaxLikelihood', verbose=False):
           # set beta, gamma, theta using a nonlinear solver
-          (beta,gamma,theta) = this.calc_params(data);     
+          (beta,gamma,theta) = this.calc_params(data,method,verbose)
+
           tau = this.calc_tau(beta,gamma,theta,data);
           H   = this.ExpectedCostPerUnitOfTime(beta,gamma,theta,tau,data);
           return (beta, gamma, theta, tau, H)
@@ -624,19 +646,21 @@ class RepairableModelGA:
 # ## Running <a id='running'></a>
 
 # <codecell>
-
+modelPLP     = None
+modelPulcini = None
+modelGA      = None
 options = {'graphics':True}
 
 # set instance
-filename = "/home/michael/github/statistics/repairable_systems/data/Gilardoni2007.txt"
+filename = "data/Gilardoni2007.txt"
 
 # read data
 data = RepairableData(filename)
 
 # create models
 #modelPLP     = RepairableModelPLP(data)
-modelPulcini = RepairableModelPulcini(data, verbose=True)
-# modelGA      = RepairableModelGA(data, verbose=True)
+#modelPulcini = RepairableModelPulcini(data, verbose=True)
+modelGA      = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
@@ -647,8 +671,9 @@ if(options['graphics']):
     # plot models
     axis = fig.add_subplot(212) 
     data.plot_mcnf(axis)
-#    modelPLP.plot(axis)
-    modelPulcini.plot(axis)
+    if(modelPLP is not None): modelPLP.plot(axis)
+    if(modelPulcini is not None): modelPulcini.plot(axis)
+    if(modelGA is not None):modelGA.plot(axis)
     axis.legend(loc='upper left')   
     # plot
     plt.show()
