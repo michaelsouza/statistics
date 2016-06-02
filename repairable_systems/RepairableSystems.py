@@ -54,8 +54,86 @@ from numbers import Number
 
 # <markdowncell>
 
+#%% search
+def bracket(f,x1,h):
+     c  = 1.618033989
+     f1 = f(x1)
+     x2 = x1 + h; f2 = f(x2)
+     # get direction
+     if f2 > f1:
+          h  = -h
+          x2 = x1 + h; f2 = f(x2)
+          # check if minimum between x1-h and x1 + h
+          if f2 > f1: return x2, x1-h
+     # search loop
+     for i in range(100):
+          h = c * h
+          x3 = x2 + h; f3 = f(x3)
+          if f3 > f2: return x1,x3
+          x1 = x2; x2 = x3
+          f1 = f2; f2 = f3
+     print 'Bracket did not find a minimum'
+
+def search(f,a,b,tol=1E-03):
+     niter = int(-2.078087 * np.log(tol/abs(b-a)))
+     R = 0.618033989
+     C = 1.0 - R
+     # first telescoping
+     x1 = R*a + C*b; x2 = C*a + R*b
+     f1 = f(x1); f2 = f(x2)
+     # main loop
+     for i in range(niter):
+          if(f1 > f2):
+               a = x1
+               x1 = x2; f1 = f2
+               x2 = C*a + R*b; f2 = f(x2)
+          else:
+               b = x2
+               x2 = x1; f2 = f1
+               x1 = R*a + C*b; f1 = f(x1)
+     if(f1 < f2): return x1,f1,i
+     else: return x2,f2,i
+
+def powell(F,x,h=0.1,tol=1E-06,verbose=False):
+     def f(s): return F(x + s * v)   # F in direction of v
+
+     n  = len(x)                     # number of variables
+     df = np.zeros(n,dtype=float)    # decreases of F
+     u  = np.eye(n,dtype=float) # vectors v are stored by row
+     for j in range(30):
+          xold = x.copy()
+          fold = F(xold)
+          print('iter %5d F(x) = % g'%(j, fold))
+          
+          # first n line searches record decreases of F
+          for i in range(n):
+               v      = u[i]
+               a,b    = bracket(f,0.0,h)
+               s,fmin,niter = search(f,a,b)
+               df[i]  = fold - fmin
+               fold   = fmin
+               x      = x + s * v
+               print('  search direcion %2d niters = %2d df = % g'%(i,niter,df[i]))
+          
+          # last line search in the cycle
+          v   = x - xold
+          a,b = bracket(f,0.0,h)
+          s,flast,_ = search(f,a,b)
+          x = x + s * v
+
+          # check convergence
+          if np.linalg.norm(x - xold)/n < tol:
+              return x, j+1, 'powell converged after %d iterations'%(j+1)
+
+          # identify biggest decrease & update v's
+          imax = int(np.argmax(df))
+          for i in range(imax, n-1):
+               u[i]   = u[i+1]
+               u[n-1] = v
+     raise Exception('Powell method did not converge')
+
 # <a href='#index'>Return to index</a> 
-# ## Bootstrap <a id='bootstrap'></a>
+#%% ## Bootstrap <a id='bootstrap'></a>
 # Random sampling with replacement (See [2])
 
 # <codecell>
@@ -515,7 +593,7 @@ class RepairableModelGA:
           this.data = data
           
           if(Algorithm=="bootstrap"):
-              (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'fsolve',verbose=True)
+              (beta,gamma,theta,tau,H,ci) = this.bootstrap(data,'powell',verbose=True)
 
           this.beta  = beta
           this.gamma = gamma
@@ -562,22 +640,32 @@ class RepairableModelGA:
               print('  Estimating parameters using %s method' % (method))
                        
           # start point (z) from curve fit using PLP and Matlab  
-          beta  = 16.6
-          gamma = 1.2
-          theta = 8690
+         beta  = 0.06685888
+         gamma = 1.402674
+         theta = 32.06542
           z = np.array([beta, gamma, theta])
-          if(method is 'fsolve'):
+
+          if(verbose):
+              print '> Initial gaps'
+              this.gap_params(data, z[0], z[1], z[2], verbose=True)
+          
+          # solve gap equations
+          if method is 'fsolve':
               noneq = lambda z: this.gap_params(data, z[0], z[1], z[2])
-              if(verbose): 
-                  (z,info,flag,msg) = opt.fsolve(noneq, z, full_output=True)
-                  gap = noneq(z)
-                  print('> gap params')
-                  print('  message: %s after %d iterations.' %(msg[:-1],info['nfev']))
-                  print('  gap beta  = %g'%(gap[0]))
-                  print('  gap gamma = %g'%(gap[1]))
-                  print('  gap theta = %g'%(gap[2]))
-              else:
-                  z = opt.fsolve(noneq, z)
+              (z,info,flag,msg) = opt.fsolve(noneq, z, full_output=True)
+              if(flag is not 1): msg = 'fsolve failed after %d iterations'%(info['nfev'])
+              else: msg = 'fsolve converged after %d iterations'%(info['nfev'])
+          elif method is 'powell':
+              noneq = lambda z: np.linalg.norm(this.gap_params(data, z[0], z[1], z[2]))
+              z,niter,msg = powell(noneq, z, h=.5)
+          
+          if(verbose):                   
+              gap = this.gap_params(data, z[0], z[1], z[2])
+              print('> gap params')
+              print('  message: %s' %(msg))
+              print('  beta  = %8.7g gap -> %g'%(z[0],gap[0]))
+              print('  gamma = %8.7g gap -> %g'%(z[1],gap[1]))
+              print('  theta = %8.7g gap -> %g'%(z[2],gap[2]))
           return z[0],z[1],z[2]
 
      def gap_params(this, data, beta, gamma, theta, verbose=False):
@@ -616,7 +704,8 @@ class RepairableModelGA:
               print('  gap beta  = %g' % (gap_beta))
               print('  gap gamma = %g' % (gap_gamma))
               print('  gap theta = %g' % (gap_theta))
-          return [gap_beta, gap_gamma, gap_theta]
+
+          return np.array([gap_beta, gap_gamma, gap_theta])
           
 
      def plot(this,axis=plt):
@@ -670,14 +759,14 @@ class RepairableModelGA:
 # <markdowncell>
 
 # <a href='#index'>Return to index</a> 
-# ## Running <a id='running'></a>
+#%% Running <a id='running'></a>
 
 # <codecell>
 
-modelPLP     = None
-modelPulcini = None
-modelGA      = None
-options = {'graphics':True}
+bPLP     = False
+bPulcini = False
+bGA      = True
+options = {'graphics':False}
 
 # set instance
 filename = "data/Gilardoni2007.txt"
@@ -685,10 +774,10 @@ filename = "data/Gilardoni2007.txt"
 # read data
 data = RepairableData(filename)
 
-# create models
-# modelPLP     = RepairableModelPLP(data)
-# modelPulcini = RepairableModelPulcini(data, verbose=True)
-modelGA      = RepairableModelGA(data, verbose=True)
+# create modelsif 
+if bPLP    : modelPLP = RepairableModelPLP(data)
+if bPulcini: modelPulcini = RepairableModelPulcini(data, verbose=True)
+if bGA     : modelGA = RepairableModelGA(data, verbose=True)
 
 if(options['graphics']):
     # plot data
@@ -699,9 +788,9 @@ if(options['graphics']):
     # plot models
     axis = fig.add_subplot(212) 
     data.plot_mcnf(axis)
-    if(modelPLP is not None): modelPLP.plot(axis)
-    if(modelPulcini is not None): modelPulcini.plot(axis)
-    if(modelGA is not None):modelGA.plot(axis)
+    if bPLP    : modelPLP.plot(axis)
+    if bPulcini: modelPulcini.plot(axis)
+    if bGA     : modelGA.plot(axis)
     axis.legend(loc='upper left')   
     # plot
     plt.show()
