@@ -35,7 +35,8 @@ import matplotlib.pyplot as plt
 import scipy.optimize as opt
 import scipy.integrate as integrate
 from numbers import Number
-
+import time
+import sys
 
 def bootci_get_min_ci(x):
     x = np.sort(x)
@@ -54,19 +55,21 @@ def bootci(nboot, bootfun, data):
     nsystems = data.numberOfSystems
     n = len(bootfun(data))  # number of statistics
 
-    print('Bootstrapping #statistics %d, #resamples = %d' % (n, nboot))
-
-    # init bootstat matrix
-    bootmat = np.zeros((nboot, n))
+    # elapsed time function
+    tstart = time.time()
+    def eta(): return time.time() - tstart
 
     # bootstrap kernel
+    bootmat = np.zeros((nboot, n))
     for k in range(nboot):
-        # sampling
+        sys.stdout.flush()
+        print('Bootstrapping #sampling = %d [%3d%%] %3.1fs (elapsed time)\r' % (nboot, (1E2*k/nboot), eta())),
+
         index = np.random.randint(nsystems, size=nsystems)
         sample = data.sample(index)
-
         # eval bootfun
         bootmat[k, :] = bootfun(sample)
+    print('Bootstrapping #sampling = %d [100%%] %3.1fs (elapsed time)\r' % (nboot, eta()))
 
     bootstat = [np.mean(bootmat[:, i]) for i in range(n)]
 
@@ -280,7 +283,7 @@ class RepairableModelPLP(object):
         (beta, theta, tau, H) = self.bootfun(data)
 
         # calc confidence interval (ci) using bootstrap
-        nboot = 100
+        nboot = 10000
         [ci, bootstat] = bootci(nboot, self.bootfun, data)
 
         # set confidence intervals
@@ -399,11 +402,16 @@ class RepairableModelGA:
         # solve gap equations
         if method is 'fsolve':
             noneq = lambda z: self.gap_params(data, z[0], z[1], z[2])
-            (z, info, flag, msg) = opt.fsolve(noneq, z, full_output=True)
-            if flag is not 1:
-                msg = 'fsolve failed after %d iterations' % (info['nfev'])
-            else:
-                msg = 'fsolve converged after %d iterations' % (info['nfev'])
+            try:
+                (z, info, flag, msg) = opt.fsolve(noneq, z, full_output=True)
+                if flag is not 1:
+                    msg = 'fsolve failed after %d iterations' % (info['nfev'])
+                else:
+                    msg = 'fsolve converged after %d iterations' % (info['nfev'])
+            except:
+                msg = '\033[93m fsolve has raised an exception\033[0m'
+                print msg
+                z = np.array([beta, gamma, theta])
         else:
             raise Exception('Unsupported method %s' % (method))
 
