@@ -640,9 +640,10 @@ class RepairableModelGA:
               print('  Estimating parameters using %s method' % (method))
                        
           # start point (z) from curve fit using PLP and Matlab  
-         beta  = 0.06685888
-         gamma = 1.402674
-         theta = 32.06542
+          beta  = 0.06748684
+          gamma = 1.457889
+          theta =  36.8688
+          
           z = np.array([beta, gamma, theta])
 
           if(verbose):
