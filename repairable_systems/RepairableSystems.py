@@ -37,10 +37,13 @@ import scipy.integrate as integrate
 from numbers import Number
 import time
 import sys
-import optimize
 
 
-def newton_raphson(f, x, tol=1.0e-9, gradobj=False, verbose=False):
+def newton_raphson(f, x, tol=1.0e-9, verbose=False):
+    """
+
+    :type verbose: boolean
+    """
     if verbose:
         print 'Init -------'
         print 'x    = ', x
@@ -77,9 +80,11 @@ def newton_raphson(f, x, tol=1.0e-9, gradobj=False, verbose=False):
 
     raise Exception('Too many iterations')
 
+
 def bootci_get_min_ci(x):
     x = np.sort(x)
     n = len(x)
+    if n is 0: return [0, 0]
     m = int(0.95 * n) - 1
     ci = [x[0], x[m]]
     for i in range(0, n - m):
@@ -98,6 +103,12 @@ def bootci(nboot, bootfun, data):
     tstart = time.time()
     def eta(): return time.time() - tstart
 
+    ci = np.zeros((n, 2), dtype=float)
+    bootstat = np.zeros(n, dtype=float)
+    if nboot < 1:
+        print('Bootstrapping #sampling = %d [100%%] %3.1fs (elapsed time)\r' % (nboot, eta()))
+        return ci, bootstat
+
     # bootstrap kernel
     bootmat = np.zeros((nboot, n))
     for k in range(nboot):
@@ -113,11 +124,28 @@ def bootci(nboot, bootfun, data):
     bootstat = [np.mean(bootmat[:, i]) for i in range(n)]
 
     # find the minimal confidence interval (ci) for each statistic
-    ci = np.zeros((n, 2), dtype=float)
+
     for i in range(n):
         ci[i, :] = bootci_get_min_ci(bootmat[:, i])
 
     return ci, bootstat
+
+
+def AIC(lnL, k): return -2.0 * lnL + 2.0 * k
+def AICc(lnL, k, n): return - 2.0 * lnL + 2.0 * (k + k * (k + 1.0)/(n - k - 1.0))
+def BIC(lnL, k, n): return -2.0 * lnL + np.log(n) / k
+def MSE(model, data):
+    return 0
+
+def lnlike(model, data):
+    assert isinstance(data, RepairableData)
+    si = 0
+    for ti in data.censorTimes:
+        si += model.ExpectedNumberOfFailures(ti)
+    sij = 0
+    for tij in data.allFailures:
+        sij += model.intensity(tij, None, None)
+    return sij - si
 
 
 class MCNF(object):
@@ -253,6 +281,7 @@ class RepairableData(object):
             data.plot()
         return data
 
+
 class RepairableModelPLP(object):
     """ Repairable Model PLP
         Power Law Process : lambda(t)=beta t^(beta-1)/theta^beta
@@ -268,19 +297,27 @@ class RepairableModelPLP(object):
         # set model parameters
         self.beta = beta; self.theta = theta; self.tau = tau; self.H = H; self.ci = ci
 
-        print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta, ci['beta'][0], ci['beta'][1]))
-        print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1]))
-        print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}] x 1000 hours'.format(tau, ci['tau'][0], ci['tau'][1]))
-        print('H ................ {:9.3g} [{:9.3g}, {:9.3g}] / 1000 hours'.format(H, ci['H'][0], ci['H'][1]))
-        # print('L1 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L1'));
-        # print('L2 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L2'));
+        print 'beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(beta, ci['beta'][0], ci['beta'][1])
+        print 'theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(theta, ci['theta'][0], ci['theta'][1])
+        print 'tau .............. {:9.3g} [{:9.3g}, {:9.3g}] x 1000 hours'.format(tau, ci['tau'][0], ci['tau'][1])
+        print 'H ................ {:9.3g} [{:9.3g}, {:9.3g}] / 1000 hours'.format(H, ci['H'][0], ci['H'][1])
 
-    def ExpectedNumberOfFailures(self, beta, theta, t):
+        logl = lnlike(self, data)
+        print 'AIC .............. {:9.3g}'.format(AIC(logl, 2))
+        print 'AICc ............. {:9.3g}'.format(AICc(logl, 2, data.numberOfSystems))
+        print 'BIC .............. {:9.3g}'.format(BIC(logl, 2, data.numberOfSystems))
+        print 'MSE .............. {:9.3g}'.format(MSE(self, data))
+
+
+    def ExpectedNumberOfFailures(self, t, beta=None, theta=None,):
         """ Calculates N(t), the expected number of failures until time t.
             beta  :: plp parameter (optional)
             theta :: plp parameter (optional)
             Model evaluation - Expected number of failures until time t.
         """
+        if beta is None: beta = self.beta
+        if theta is None: theta = self.theta
+
         Nt = (t / theta) ** beta
         return Nt
 
@@ -288,14 +325,16 @@ class RepairableModelPLP(object):
         """ Calculates H(t), the expected cost per unit of time
             See [Gilardoni2007] eq.(2) pp. 49
         """
-        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(beta, theta, tau)) / tau
+        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(tau, beta, theta)) / tau
         return H
 
-    def intensity(self, beta, theta, t):
+    def intensity(self, t, beta=None, theta=None):
         # Evaluates the intensity function (lambda).
         # t     :: time
         # beta  :: PLP parameter
         # theta :: PLP parameter
+        if beta is None: beta = self.beta
+        if theta is None: theta = self.theta
         y = (beta / theta) * (t / theta) ** (beta - 1)
         return y
 
@@ -307,13 +346,13 @@ class RepairableModelPLP(object):
     def gap_tau(self, beta, theta, tau, data):
         # Check the error (gap) in the current tau value.
         # See [Gilardoni2007] eq. (4) pp. 49
-        gap = tau * self.intensity(beta, theta, tau) - self.ExpectedNumberOfFailures(beta,theta,tau) - data.CPM / data.CMR
+        gap = tau * self.intensity(tau, beta, theta) - self.ExpectedNumberOfFailures(tau, beta, theta) - data.CPM / data.CMR
         return gap
 
     def plot(self, axis=plt):
         tmax = np.max(self.data.censorTimes)
         t = np.linspace(0, tmax)
-        Nt = self.ExpectedNumberOfFailures(self.beta, self.theta, t)
+        Nt = self.ExpectedNumberOfFailures(t)
         axis.plot(t, Nt, label='PLP', marker='d')
 
     # BOOTSTRAP ====================================================================
@@ -322,7 +361,7 @@ class RepairableModelPLP(object):
         (beta, theta, tau, H) = self.bootfun(data)
 
         # calc confidence interval (ci) using bootstrap
-        nboot = 10000
+        nboot = 0
         [ci, bootstat] = bootci(nboot, self.bootfun, data)
 
         # set confidence intervals
@@ -380,26 +419,34 @@ class RepairableModelPLP(object):
         theta = sum(T ** beta / M) ** (1 / beta)
         return theta
 
+
 class RepairableModelGA:
     """ Repairable Model GA """
     def __init__(self, data):
         print('# Model: GA     -----------------------------------')
         self.data = data
 
-        (self.beta, self.gamma, self.theta, self.tau, self.H, self.ci) = self.bootstrap(data, 'fsolve', verbose=False)
+        (self.beta, self.gamma, self.theta, self.tau, self.H, self.ci) = self.__bootstrap__(data, 'fsolve', verbose=False)
 
         print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.beta, self.ci['beta'][0], self.ci['beta'][1]))
         print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.theta, self.ci['theta'][0], self.ci['theta'][1]))
         print('gamma ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.gamma, self.ci['gamma'][0], self.ci['gamma'][1]))
         print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}] x 1000 hours'.format(self.tau, self.ci['tau'][0], self.ci['tau'][1]))
         print('H ................ {:9.3g} [{:9.3g}, {:9.3g}] / 1000 hours'.format(self.H, self.ci['H'][0], self.ci['H'][1]))
-        # print('L1 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L1'));
-        # print('L2 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L2'));
 
-    def intensity(self, beta, gamma, theta, t):
+        logl = lnlike(self, data)
+        print 'AIC .............. {:9.3g}'.format(AIC(logl, 3))
+        print 'AICc ............. {:9.3g}'.format(AICc(logl, 3, data.numberOfSystems))
+        print 'BIC .............. {:9.3g}'.format(BIC(logl, 3, data.numberOfSystems))
+        print 'MSE .............. {:9.3g}'.format(MSE(self, data))
+
+    def intensity(self, t, beta=None, gamma=None, theta=None):
+        if beta is None: beta = self.beta
+        if theta is None: theta = self.theta
+        if gamma is None: gamma = self.gamma
         return beta * (1 - np.exp(-t ** gamma / theta))
 
-    def calc_tau(self, beta, gamma, theta, data, verbose=False):
+    def __calc_tau__(self, beta, gamma, theta, data, verbose=False):
         # using a nonlinear solver (fsolve)
         # ToDo(1): Add derivative of gap (fprime)
         # ToDo(2): Check if it is better to use args instead of lambda functions
@@ -408,7 +455,7 @@ class RepairableModelGA:
         kappa = data.CPM / data.CMR
         G1223 = lambda z: mp.meijerg([[0, 1 - 1 / gamma], []], [[0], [1, -1 / gamma]], (z ** gamma) / theta)
         gap = lambda tau: kappa + beta * tau[0] * G1223(tau[0])
-        x0 = [6.5]  # from ModelPLP
+        x0 = [5.84]  # from ModelPLP
         tau = opt.fsolve(gap, x0, args=(), fprime=None)
 
         if verbose:
@@ -421,7 +468,7 @@ class RepairableModelGA:
 
         return tau[0]
 
-    def calc_params(self, data, method, verbose=False):
+    def __calc_params__(self, data, method, verbose=False):
         # ToDo: Check if it is better to use args instead of lambda functions
         if verbose:
             print('  Estimating parameters using %s method' % method)
@@ -433,7 +480,7 @@ class RepairableModelGA:
         z = np.array([beta, gamma, theta])
 
         if verbose:
-            gap = self.gap_params(data, z[0], z[1], z[2])
+            gap = self.__gap_params__(data, z[0], z[1], z[2])
             print('> gap init')
             print('  beta  = %e [gap = % e]' % (z[0], gap[0]))
             print('  gamma = %e [gap = % e]' % (z[1], gap[1]))
@@ -441,7 +488,7 @@ class RepairableModelGA:
 
         # solve gap equations
         if method is 'fsolve':
-            noneq = lambda z: self.gap_params(data, z[0], z[1], z[2])
+            noneq = lambda z: self.__gap_params__(data, z[0], z[1], z[2])
             try:
                 (z, info, flag, msg) = opt.fsolve(noneq, z, full_output=True)
                 if flag is not 1:
@@ -456,7 +503,7 @@ class RepairableModelGA:
             raise Exception('Unsupported method %s' % (method))
 
         if verbose:
-            gap = self.gap_params(data, z[0], z[1], z[2])
+            gap = self.__gap_params__(data, z[0], z[1], z[2])
             print('> gap final')
             print('  message: %s' % msg)
             print('  beta  = %e [gap = % e]' % (z[0], gap[0]))
@@ -464,7 +511,7 @@ class RepairableModelGA:
             print('  theta = %e [gap = % e]' % (z[2], gap[2]))
         return z[0], z[1], z[2]
 
-    def gap_params(self, data, beta, gamma, theta, verbose=False):
+    def __gap_params__(self, data, beta, gamma, theta, verbose=False):
         G1112A = lambda z: mp.meijerg([[1 - 1 / gamma], []], [[0], [-1 / gamma]], (z ** gamma) / theta)
         G1112B = lambda z: mp.meijerg([[0], []], [[0], [1]], (z ** gamma) / theta)
         G1223 = lambda z: mp.meijerg([[0, 1 - 1 / gamma], []], [[0], [-1 / gamma, 1]], (z ** gamma) / theta)
@@ -506,12 +553,17 @@ class RepairableModelGA:
     def plot(self, axis=plt):
         tmax = np.max(self.data.censorTimes)
         t = np.linspace(0, tmax)
-        Nt = self.ExpectedNumberOfFailures(self.beta, self.gamma, self.theta, t)
+        Nt = self.ExpectedNumberOfFailures(t, self.beta, self.gamma, self.theta)
         axis.plot(t, Nt, label='GA', marker='s')
 
-    def ExpectedNumberOfFailures(self, beta, gamma, theta, t, verbose=False):
+    def ExpectedNumberOfFailures(self, t, beta=None, gamma=None, theta=None, verbose=False):
         # Calc integral(intensity(s),s=0..t)
-        f = lambda t: self.intensity(beta, gamma, theta, t)
+
+        if beta is None:beta = self.beta
+        if theta is None:theta = self.theta
+        if gamma is None: gamma = self.gamma
+
+        f = lambda t: self.intensity(t, beta, gamma, theta)
 
         # t is just a number
         if isinstance(t, Number):
@@ -527,28 +579,29 @@ class RepairableModelGA:
     def ExpectedCostPerUnitOfTime(self, beta, gamma, theta, tau, data, verbose=False):
         # Calculates H(t), the expected cost per unit of time
         # See [Gilardoni2007] eq.(2) pp. 49
-        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(beta, gamma, theta, tau, verbose)) / tau;
+        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(tau, beta, gamma, theta, verbose)) / tau;
         return H
 
     # BOOTSTRAP ====================================================================
-    def bootstrap(self, data, method, verbose=False):
+    def __bootstrap__(self, data, method, verbose=False):
         # set estimatives using full data
-        (beta, gamma, theta, tau, H) = self.bootfun(data, method, verbose);
+        (beta, gamma, theta, tau, H) = self.__bootfun__(data, method, verbose);
 
         # set confidence intervals using bootstrap
-        nboot = 3
-        [ci, bootstat] = bootci(nboot, self.bootfun, data)
+        nboot = 0
+        [ci, bootstat] = bootci(nboot, self.__bootfun__, data)
         ci = dict(beta=ci[0], gamma=ci[1], theta=ci[2], tau=ci[3], H=ci[4])
 
         return beta, gamma, theta, tau, H, ci
 
-    def bootfun(self, data, method='fsolve', verbose=False):
+    def __bootfun__(self, data, method='fsolve', verbose=False):
         # set beta, gamma, theta using a nonlinear solver
-        (beta, gamma, theta) = self.calc_params(data, method, verbose)
+        (beta, gamma, theta) = self.__calc_params__(data, method, verbose)
 
-        tau = self.calc_tau(beta, gamma, theta, data)
+        tau = self.__calc_tau__(beta, gamma, theta, data)
         H = self.ExpectedCostPerUnitOfTime(beta, gamma, theta, tau, data)
         return beta, gamma, theta, tau, H
+
 
 class RepairableModelGB:
     """ Repairable Model GB
@@ -558,42 +611,84 @@ class RepairableModelGB:
         print('# Model: GB     -----------------------------------')
         self.data = data
 
-        (self.beta, self.gamma, self.theta, self.tau, self.H, self.ci) = self.bootstrap(data, 'newton_raphson', verbose=True)
+        (self.beta, self.gamma, self.theta, self.tau, self.H, self.ci) = self.__bootstrap__(data, 'newton_raphson', verbose=True)
 
         print('beta  ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.beta, self.ci['beta'][0], self.ci['beta'][1]))
         print('theta ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.theta, self.ci['theta'][0], self.ci['theta'][1]))
         print('gamma ............ {:9.3g} [{:9.3g}, {:9.3g}]'.format(self.gamma, self.ci['gamma'][0], self.ci['gamma'][1]))
         print('tau .............. {:9.3g} [{:9.3g}, {:9.3g}] x 1000 hours'.format(self.tau, self.ci['tau'][0], self.ci['tau'][1]))
         print('H ................ {:9.3g} [{:9.3g}, {:9.3g}] / 1000 hours'.format(self.H, self.ci['H'][0], self.ci['H'][1]))
-        # print('L1 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L1'));
-        # print('L2 distance ...... % 9.3g\n', data.distance(@(t)self.ExpectedNumberOfFailures(t), 'L2'));
 
-    def intensity(self, beta, gamma, theta, t):
+        logl = lnlike(self, data)
+        print 'AIC .............. {:9.3g}'.format(AIC(logl, 3))
+        print 'AICc ............. {:9.3g}'.format(AICc(logl, 3, data.numberOfSystems))
+        print 'BIC .............. {:9.3g}'.format(BIC(logl, 3, data.numberOfSystems))
+        print 'MSE .............. {:9.3g}'.format(MSE(self, data))
+
+    def intensity(self, t, beta=None, gamma=None, theta=None):
+        if beta is None: beta = self.beta
+        if gamma is None: gamma = self.gamma
+        if theta is None: theta = self.theta
+
         return beta * t**gamma / (t**gamma + theta)
 
-    def calc_tau(self, beta, gamma, theta, data, verbose=False):
+    def ExpectedNumberOfFailures(self, t, beta=None, gamma=None, theta=None, verbose=False):
+        # Calc integral(intensity(s),s=0..t)
+        def f(t):
+            return self.intensity(t, beta, gamma, theta)
+
+        # t is just a number
+        if isinstance(t, Number):
+            Nt, abserr = integrate.quad(f, 0, t)
+            if verbose:
+                print('  Estimate of absolute error in quadrature %g' % abserr)
+        else:
+            Nt = np.zeros(len(t))
+            for i in range(len(t)):
+                Nt[i], _ = integrate.quad(f, 0, t[i])
+        return Nt
+
+    def ExpectedCostPerUnitOfTime(self, beta, gamma, theta, tau, data, verbose=False):
+        # Calculates H(t), the expected cost per unit of time
+        # See [Gilardoni2007] eq.(2) pp. 49
+        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(tau, beta, gamma, theta, verbose)) / tau
+        return H
+
+    def plot(self, axis=plt):
+        tmax = np.max(self.data.censorTimes)
+        t = np.linspace(0, tmax)
+        Nt = self.ExpectedNumberOfFailures(t, self.beta, self.gamma, self.theta)
+        axis.plot(t, Nt, label='GB', marker='s')
+
+    def __calc_tau__(self, beta, gamma, theta, data, verbose=False):
         # using a nonlinear solver (fsolve)
         # ToDo(1): Add derivative of gap (fprime)
         # ToDo(2): Check if it is better to use args instead of lambda functions
 
         kappa = data.CPM / data.CMR
-        fun = lambda u: u**gamma / ((u**gamma + theta)**2)
-        gap = lambda tau: kappa - beta * gamma * theta * integrate.quad(fun, 0, tau)
-        x0 = [6.5]  # from ModelPLP
+        def G1333(z): return mp.meijerg([[0,1-1/gamma,0], []], [[0], [1,-1/gamma]], (z**gamma) / theta)
+        def gap(tau): return kappa + beta * tau[0] * G1333(tau[0])
+
+        # set initial tau
+        tau = [5.85]  # from ModelPLP
+
+        if verbose:
+            print('> calc tau')
+            print('     tau = %f (init)' % tau[0])
+            print('     gap = %e (init)' % gap(tau))
 
         # solve gap(tau) = 0
-        tau = opt.fsolve(gap, x0, args=(), fprime=None)
+        tstart = time.time()
+        (tau, info, flag, msg) = opt.fsolve(gap, tau, args=(), fprime=None, full_output=True)
+        eta = time.time() - tstart
         if verbose:
-            (tau, info, flag, msg) = opt.fsolve(gap, x0, args=(), fprime=None, full_output=True)
-            print('> calc tau')
-            print('  message: %s after %d iterations.' % (msg[:-1], info['nfev']))
-            print('  x0  = %f' % x0[0])
-            print('  tau = %f' % tau[0])
-            print('  gap = %e' % gap(tau))
+            print('     message: %s after %d iterations in %3.2f seconds.' % (msg[:-1], info['nfev'], eta))
+            print('     tau = %f (final)' % tau[0])
+            print('     gap = %e (final)' % gap(tau))
 
         return tau[0]
 
-    def calc_params(self, data, method, verbose=False):
+    def __calc_params__(self, data, method, verbose=False):
         # ToDo: Check if it is better to use args instead of lambda functions
         # ToDo: Improve the start point
         if verbose:
@@ -605,44 +700,46 @@ class RepairableModelGB:
         theta = 5.984159e+01
         z = np.array([beta, gamma, theta])
 
+        # set elapsed time function
+        def eta(t): return time.time() - t
         if verbose:
-            gap = self.gap_params(data, z[0], z[1], z[2])
-            print('> gap init')
+            tstart = time.time()
+            gap = self.__gap_params__(data, z[0], z[1], z[2])
+            print('> gap init: eval %3.2f seconds' % eta(tstart))
             print('  beta  = %e [gap = % e]' % (z[0], gap[0]))
             print('  gamma = %e [gap = % e]' % (z[1], gap[1]))
             print('  theta = %e [gap = % e]' % (z[2], gap[2]))
 
-        tstart = time.time()
-        def eta():
-            return time.time() - tstart
+        def eta(t): return time.time() - t
 
         # solve gap equations
+        tstart = time.time()
         if method is 'fsolve':
-            noneq = lambda z: self.gap_params(data, z[0], z[1], z[2])
+            noneq = lambda z: self.__gap_params__(data, z[0], z[1], z[2])
             try:
                 (z, info, flag, msg) = opt.fsolve(noneq, z, full_output=True)
                 if flag is not 1:
                     msg = 'fsolve failed after %d iterations' % (info['nfev'])
                 else:
-                    msg = 'fsolve converged after %d iterations and %3.2f seconds' % (info['nfev'], eta())
+                    msg = 'fsolve converged after %d iterations and %3.2f seconds' % (info['nfev'], eta(tstart))
             except:
                 msg = '\033[93m fsolve has raised an exception\033[0m'
                 print msg
                 z = np.array([beta, gamma, theta])
         elif method is 'newton_raphson':
-            noneq = lambda z: self.gap_params(data, z[0], z[1], z[2])
+            noneq = lambda z: self.__gap_params__(data, z[0], z[1], z[2])
             try:
                 z, niter = newton_raphson(noneq, z)
-                msg = 'newton_raphson converged after %d iterations and %3.2f seconds' % (niter, eta())
+                msg = 'newton_raphson converged after %d iterations and %3.2f seconds' % (niter, eta(start))
             except:
-                msg = '\033[93m newton_raphson has raised an exception\033[0m'
+                msg = '\033[93m newton_raphson has raised an exception\033[0m' + sys.exc_info()[0]
                 print msg
                 z = np.array([beta, gamma, theta])
         else:
             raise Exception('Unsupported method %s' % (method))
 
         if verbose:
-            gap = self.gap_params(data, z[0], z[1], z[2])
+            gap = self.__gap_params__(data, z[0], z[1], z[2])
             print('> gap final')
             print('  message: %s' % msg)
             print('  beta  = %e [gap = % e]' % (z[0], gap[0]))
@@ -650,36 +747,41 @@ class RepairableModelGB:
             print('  theta = %e [gap = % e]' % (z[2], gap[2]))
         return z[0], z[1], z[2]
 
-    def gap_params(self, data, beta, gamma, theta, verbose=False):
-        G1112A = lambda z: mp.meijerg([[1-1/gamma,0], []], [[0], [-1/gamma]], (z ** gamma) / theta)
-        G1333 = lambda z: mp.meijerg([[0,1-1/gamma,0], []], [[0], [-1/gamma,1]], (z ** gamma) / theta)
-        G1112B = lambda z: mp.meijerg([[0, 0], []], [[0], [1]], (z ** gamma) / theta)
-        G1111 = lambda z: mp.meijerg([[0], []], [[0], []], (z ** gamma) / theta)
-        G1444 = lambda z: mp.meijerg([[0,1-1/gamma,1-1/gamma,0], []], [[0], [-1/gamma,-1/gamma,1]], (z ** gamma) / theta)
-        G1555 = lambda z: mp.meijerg([[0,1-1/gamma,1-1/gamma,1-1/gamma,0], []], [[0], [-1/gamma,-1/gamma,-1/gamma,1]], (z ** gamma) / theta)
+    def __gap_params__(self, data, beta, gamma, theta, verbose=False):
+        def G1112A(z): return mp.meijerg([[1-1/gamma,0], []], [[0], [-1/gamma]], (z ** gamma) / theta)
+        def G1333(z): return mp.meijerg([[0,1-1/gamma,0], []], [[0], [-1/gamma,1]], (z ** gamma) / theta)
+        def G1112B(z): return mp.meijerg([[0, 0], []], [[0], [1]], (z ** gamma) / theta)
+        def G1111(z): return mp.meijerg([[0], []], [[0], []], (z ** gamma) / theta)
+        def G1444(z): return mp.meijerg([[0,1-1/gamma,1-1/gamma,0], []], [[0], [-1/gamma,-1/gamma,1]], (z ** gamma) / theta)
+        def G1555(z): return mp.meijerg([[0,1-1/gamma,1-1/gamma,1-1/gamma,0], []], [[0], [-1/gamma,-1/gamma,-1/gamma,1]], (z ** gamma) / theta)
+
+        Tij = data.allFailures
+        Ti = data.censorTimes
+
+        # calculates in advance to save time
+        assert isinstance(Tij, np.ndarray)
+        GTij = np.zeros(Tij.size, dtype=np.float)
+        for k in range(Tij.size):
+            GTij[k] = G1112B(Tij[k]) / (1 - G1111(Tij[k]))
 
         # gap beta
         si = 0
-        for Ti in data.censorTimes:
-            si += Ti * (1 - G1112A(Ti) / gamma)
-        gap_beta = -si + len(data.allFailures) / beta
+        for ti in Ti:
+            si += ti * (1 - G1112A(ti) / gamma)
+        gap_beta = -si + Tij.size / beta
 
         # gap gamma
         si = 0
-        for Ti in data.censorTimes:
-            si += Ti * (mp.ln(Ti) * G1444(Ti) - G1555(Ti) / gamma)
-        sij = 0
-        for tij in data.allFailures:
-            sij += (mp.ln(tij) * G1112B(tij)) / (1 - G1111(tij))
+        for ti in Ti:
+            si += ti * (mp.ln(ti) * G1444(ti) - G1555(ti) / gamma)
+        sij = np.sum(np.log(Tij) * GTij)
         gap_gamma = (beta / gamma) * si - sij
 
         # gap theta
         si = 0
-        for Ti in data.censorTimes:
-            si += Ti * G1333(Ti)
-        sij = 0
-        for tij in data.allFailures:
-            sij += G1112B(tij) / (1 - G1111(tij))
+        for ti in Ti:
+            si += ti * G1333(ti)
+        sij = np.sum(GTij)
         gap_theta = (beta * theta / gamma) * si - theta * sij
 
         if verbose:
@@ -689,58 +791,32 @@ class RepairableModelGB:
 
         return np.array([gap_beta, gap_gamma, gap_theta], dtype=float)
 
-    def plot(self, axis=plt):
-        tmax = np.max(self.data.censorTimes)
-        t = np.linspace(0, tmax)
-        Nt = self.ExpectedNumberOfFailures(self.beta, self.gamma, self.theta, t)
-        axis.plot(t, Nt, label='GA', marker='s')
-
-    def ExpectedNumberOfFailures(self, beta, gamma, theta, t, verbose=False):
-        # Calc integral(intensity(s),s=0..t)
-        f = lambda t: self.intensity(beta, gamma, theta, t)
-
-        # t is just a number
-        if isinstance(t, Number):
-            Nt, abserr = integrate.quad(f, 0, t)
-            if verbose:
-                print('  Estimate of absolute error in quadrature %g' % abserr)
-        else:
-            Nt = np.zeros(len(t))
-            for i in range(len(t)):
-                Nt[i], _ = integrate.quad(f, 0, t[i])
-        return Nt
-
-    def ExpectedCostPerUnitOfTime(self, beta, gamma, theta, tau, data, verbose=False):
-        # Calculates H(t), the expected cost per unit of time
-        # See [Gilardoni2007] eq.(2) pp. 49
-        H = (data.CPM + data.CMR * self.ExpectedNumberOfFailures(beta, gamma, theta, tau, verbose)) / tau;
-        return H
-
     # BOOTSTRAP ====================================================================
-    def bootstrap(self, data, method, verbose=False):
+    def __bootstrap__(self, data, method, verbose=False):
         # set estimatives using full data
-        (beta, gamma, theta, tau, H) = self.bootfun(data, method, verbose);
+        (beta, gamma, theta, tau, H) = self.__bootfun__(data, method, verbose);
 
-        raise Exception('NotImplemented')
         # set confidence intervals using bootstrap
-        nboot = 3
-        [ci, bootstat] = bootci(nboot, self.bootfun, data)
+        nboot = 0
+        [ci, bootstat] = bootci(nboot, self.__bootfun__, data)
         ci = dict(beta=ci[0], gamma=ci[1], theta=ci[2], tau=ci[3], H=ci[4])
 
         return beta, gamma, theta, tau, H, ci
 
-    def bootfun(self, data, method='fsolve', verbose=False):
+    def __bootfun__(self, data, method='fsolve', verbose=False):
         # set beta, gamma, theta using a nonlinear solver
-        (beta, gamma, theta) = self.calc_params(data, method, verbose)
+        (beta, gamma, theta) = self.__calc_params__(data, method, verbose)
 
-        tau = self.calc_tau(beta, gamma, theta, data)
+        tau = self.__calc_tau__(beta, gamma, theta, data)
+
         H = self.ExpectedCostPerUnitOfTime(beta, gamma, theta, tau, data)
         return beta, gamma, theta, tau, H
 
-
-
 if __name__ == '__main__':
-    options = dict(PLP=True, GA=False, GB=True, graphics=True)
+    options = dict(PLP=True, GA=True, GB=True, graphics=True, precision=32)
+
+    # set mpmath precision
+    mp.prec = options['precision']
 
     # set instance
     filename = "data/Gilardoni2007.txt"
